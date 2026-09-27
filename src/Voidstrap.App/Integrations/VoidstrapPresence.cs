@@ -139,13 +139,21 @@ internal static class VoidstrapPresence
 	}
 }
 
-internal sealed class NamedActivityPipe : INamedPipeClient
+internal sealed class DiscordActivityPipe : INamedPipeClient
 {
 	private readonly ManagedNamedPipeClient _inner = new();
 
-	private readonly string _activityName;
+	private readonly object _gate = new();
 
-	public NamedActivityPipe(string activityName)
+	private readonly string? _activityName;
+
+	private bool _sealed;
+
+	private bool _hasActivity;
+
+	private long _activityPid = Environment.ProcessId;
+
+	public DiscordActivityPipe(string? activityName = null)
 	{
 		_activityName = activityName;
 	}
@@ -165,23 +173,75 @@ internal sealed class NamedActivityPipe : INamedPipeClient
 
 	public bool ReadFrame(out PipeFrame frame) => _inner.ReadFrame(out frame);
 
-	public bool WriteFrame(PipeFrame frame) => _inner.WriteFrame(frame.Opcode == Opcode.Frame ? WithActivityName(frame) : frame);
+	public bool WriteFrame(PipeFrame frame)
+	{
+		lock (_gate)
+		{
+			if (frame.Opcode == Opcode.Frame)
+			{
+				if (_sealed)
+					return true;
+				frame = Inspect(frame);
+			}
+			return _inner.WriteFrame(frame);
+		}
+	}
 
-	public void Close() => _inner.Close();
+	public void ClearAndSeal()
+	{
+		lock (_gate)
+		{
+			if (_sealed)
+				return;
+			_sealed = true;
+			if (!_hasActivity || !_inner.IsConnected)
+				return;
 
-	public void Dispose() => _inner.Dispose();
+			JsonObject payload = new()
+			{
+				["cmd"] = "SET_ACTIVITY",
+				["args"] = new JsonObject { ["pid"] = _activityPid },
+				["nonce"] = Guid.NewGuid().ToString("N")
+			};
+			try
+			{
+				if (_inner.WriteFrame(new PipeFrame { Opcode = Opcode.Frame, Message = payload.ToJsonString() }))
+					_hasActivity = false;
+			}
+			catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
+			{
+			}
+		}
+	}
 
-	private PipeFrame WithActivityName(PipeFrame frame)
+	public void Close()
+	{
+		lock (_gate)
+			_inner.Close();
+	}
+
+	public void Dispose()
+	{
+		lock (_gate)
+			_inner.Dispose();
+	}
+
+	private PipeFrame Inspect(PipeFrame frame)
 	{
 		try
 		{
 			if (JsonNode.Parse(frame.Message) is JsonObject payload
 				&& payload["cmd"]?.GetValue<string>() == "SET_ACTIVITY"
-				&& payload["args"] is JsonObject arguments
-				&& arguments["activity"] is JsonObject activity)
+				&& payload["args"] is JsonObject arguments)
 			{
-				activity["name"] = _activityName;
-				frame.Message = payload.ToJsonString();
+				if (arguments["pid"] is JsonValue pid && pid.TryGetValue(out long value))
+					_activityPid = value;
+				_hasActivity = arguments["activity"] is JsonObject;
+				if (_activityName != null && arguments["activity"] is JsonObject activity)
+				{
+					activity["name"] = _activityName;
+					frame.Message = payload.ToJsonString();
+				}
 			}
 		}
 		catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException)

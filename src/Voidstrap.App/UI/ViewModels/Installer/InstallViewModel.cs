@@ -14,6 +14,8 @@ public class InstallViewModel : NotifyPropertyChangedViewModel
 	private readonly string _originalInstallLocation;
 	private string _soberInstallStatus = string.Empty;
 
+	private System.Threading.CancellationTokenSource? _soberCancellation;
+
 	public EventHandler<bool>? SetCanContinueEvent;
 
 	public string InstallLocation
@@ -169,21 +171,43 @@ public class InstallViewModel : NotifyPropertyChangedViewModel
 		if (Voidstrap.Utility.Platform.IsLinux)
 		{
 			SoberInstallStatus = "Installing Sober";
+			using System.Threading.CancellationTokenSource cancellation = new();
+			_soberCancellation = cancellation;
 			try
 			{
 				Voidstrap.Platform.OperationResult result = await new Voidstrap.Platform.Linux.LinuxSoberInstaller(new Voidstrap.Core.SystemProcessService())
-					.InstallAsync(report: report);
+					.InstallAsync(cancellation.Token, report);
 				App.Logger.WriteLine("InstallViewModel::DoInstall", result.Succeeded ? "Sober installed" : (result.Failure?.Message ?? "Sober could not be installed"));
 				if (!result.Succeeded)
 					Frontend.ShowMessageBox(result.Failure?.Message ?? "Sober could not be installed", MessageBoxImage.Error, MessageBoxButton.OK);
+			}
+			catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+			{
+				App.Logger.WriteLine("InstallViewModel::DoInstall", "The Sober install was cancelled");
+				return false;
 			}
 			catch (Exception ex)
 			{
 				App.Logger.WriteException("InstallViewModel::DoInstall", ex);
 				Frontend.ShowMessageBox("Sober could not be installed: " + ex.Message, MessageBoxImage.Error, MessageBoxButton.OK);
 			}
+			finally
+			{
+				_soberCancellation = null;
+			}
 		}
 		return true;
+	}
+
+	public void CancelSoberInstall()
+	{
+		try
+		{
+			_soberCancellation?.Cancel();
+		}
+		catch (ObjectDisposedException)
+		{
+		}
 	}
 
 	private void BrowseInstallLocation()

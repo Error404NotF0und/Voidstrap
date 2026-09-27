@@ -654,6 +654,10 @@ public static class LaunchHandler
 				ResizeMode = ResizeMode.NoResize,
 				WindowState = System.Windows.WindowState.Minimized
 			};
+			if (OperatingSystem.IsLinux())
+			{
+				Voidstrap.Integrations.Overlays.LinuxOverlaySurface.ReleaseMainWindowClaim(window);
+			}
 			window.Show();
 			window.Hide();
 			_launchKeepAliveWindow = window;
@@ -930,6 +934,8 @@ public static class LaunchHandler
 
 		bool stayResident = false;
 		long assetPreloadPlaceId = 0;
+		CancellationToken cancellation = CancellationToken.None;
+		CancellationTokenRegistration cancelRequested = default;
 
 		try
 		{
@@ -953,7 +959,9 @@ public static class LaunchHandler
 			Bootstrapper? linuxBootstrapper = null;
 			if (OperatingSystem.IsLinux())
 			{
-				linuxBootstrapper = new(launchMode);
+				linuxBootstrapper = new(launchMode) { CancellationHandledByCaller = true };
+				cancellation = linuxBootstrapper.CancellationToken;
+				cancelRequested = cancellation.Register(OnPortableLaunchCancelRequested);
 				ShowPortableLaunchDialog(linuxBootstrapper);
 				if (runtimeKind == Voidstrap.Platform.RuntimeKind.Player && App.Settings.Prop.VoidstrapMatchmakerEnabled)
 					SetPortableLaunchStatus("Finding the closest server");
@@ -961,7 +969,8 @@ public static class LaunchHandler
 			string rewrittenTarget = await Bootstrapper.RewriteVoidstrapMatchmakerBeforeDispatchAsync(
 				launchTarget,
 				launchMode,
-				CancellationToken.None);
+				cancellation);
+			cancellation.ThrowIfCancellationRequested();
 			if (!string.Equals(rewrittenTarget, launchTarget, StringComparison.Ordinal))
 			{
 				launchTarget = rewrittenTarget;
@@ -976,6 +985,7 @@ public static class LaunchHandler
 				{
 					return;
 				}
+				cancellation.ThrowIfCancellationRequested();
 				if (runtimeKind == Voidstrap.Platform.RuntimeKind.Player)
 				{
 					Voidstrap.Platform.Linux.LinuxSoberRuntimeProvider.ForceX11Session = Voidstrap.Integrations.Overlays.OverlaySettings.RequiresLinuxX11Session
@@ -984,16 +994,22 @@ public static class LaunchHandler
 						? "Window controls or effects are on, starting Sober on X11"
 						: "Starting Sober in its default display mode");
 					await PrepareLinuxEffectLayersAsync();
+					cancellation.ThrowIfCancellationRequested();
 					SetPortableLaunchStatus("Closing the current Roblox session");
-					if (!await Voidstrap.Platform.Linux.LinuxSoberRuntimeProvider.TryCloseSoberAsync(CancellationToken.None))
+					if (!await Voidstrap.Platform.Linux.LinuxSoberRuntimeProvider.TryCloseSoberAsync(cancellation))
 					{
+						cancellation.ThrowIfCancellationRequested();
 						ShowPortableLaunchFailure("The current Sober session could not be closed. Close Sober and try joining again.");
 						return;
 					}
 					try
 					{
 						SetPortableLaunchStatus(Strings.Bootstrapper_Status_Configuring);
-						await bootstrapper.PrepareLinuxLaunchAsync(CancellationToken.None);
+						await bootstrapper.PrepareLinuxLaunchAsync(cancellation);
+					}
+					catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+					{
+						throw;
 					}
 					catch (Exception ex)
 					{
@@ -1008,12 +1024,13 @@ public static class LaunchHandler
 				Voidstrap.Platform.RuntimeInstallation installation = await provider.FindInstallationAsync();
 				if (runtimeKind == Voidstrap.Platform.RuntimeKind.Player)
 				{
-					installation = await Bootstrapper.EnsureSoberInstalledAsync(provider, installation, host, SetPortableLaunchStatus, CancellationToken.None);
+					installation = await Bootstrapper.EnsureSoberInstalledAsync(provider, installation, host, SetPortableLaunchStatus, cancellation);
 				}
 				else
 				{
-					installation = await Bootstrapper.EnsureVinegarInstalledAsync(provider, installation, host, SetPortableLaunchStatus, CancellationToken.None);
+					installation = await Bootstrapper.EnsureVinegarInstalledAsync(provider, installation, host, SetPortableLaunchStatus, cancellation);
 				}
+				cancellation.ThrowIfCancellationRequested();
 				if (!installation.Capability.IsAvailable)
 				{
 					ShowPortableLaunchFailure(installation.Capability.Reason);
@@ -1029,13 +1046,14 @@ public static class LaunchHandler
 						"Roblox is not downloaded yet, fetching it before applying settings and mods");
 
 					bool downloaded = await Voidstrap.Platform.Linux.LinuxSoberRuntimeProvider
-						.TryDownloadRobloxPackageAsync(CancellationToken.None, SetPortableLaunchStatus);
+						.TryDownloadRobloxPackageAsync(cancellation, SetPortableLaunchStatus);
 
 					App.Logger.WriteLine(
 						"LaunchHandler::FirstRun",
 						downloaded
 							? "Roblox downloaded, settings and mods will apply on this launch"
 							: "Roblox did not finish downloading in Sober");
+					cancellation.ThrowIfCancellationRequested();
 					if (!downloaded)
 					{
 						ShowPortableLaunchFailure("Sober has not finished downloading Roblox yet. Finish the setup in the Sober window, then launch again.");
@@ -1043,6 +1061,7 @@ public static class LaunchHandler
 					}
 				}
 
+				cancellation.ThrowIfCancellationRequested();
 				SetPortableLaunchStatus(Strings.Bootstrapper_Status_Configuring);
 				Voidstrap.Platform.Linux.LinuxRuntimeConfiguration configuration = Voidstrap.Platform.Linux.LinuxRuntimeConfiguration.CreateDefault(Paths.Mods, host.Processes);
 				Voidstrap.Platform.OperationResult prepared = await configuration.PrepareAsync(
@@ -1090,7 +1109,7 @@ public static class LaunchHandler
 						AssetPreloadCache.SwitchSession(assetPreloadPlaceId);
 					}
 					SetPortableLaunchStatus("Starting AssetWarp");
-					await Bootstrapper.StartAssetProxyIfEnabled(CancellationToken.None);
+					await Bootstrapper.StartAssetProxyIfEnabled(cancellation);
 					if (AssetProxyServer.IsRequired && !AssetProxyServer.IsRunning)
 					{
 						throw new InvalidOperationException("AssetWarp could not start its Linux proxy. Check the Voidstrap log for the exact failure.");
@@ -1098,6 +1117,7 @@ public static class LaunchHandler
 				}
 			}
 
+			cancellation.ThrowIfCancellationRequested();
 			SetPortableLaunchStatus(Strings.Bootstrapper_Status_Starting);
 			Voidstrap.Core.RuntimeLaunchCoordinator coordinator = new(host.PlayerRuntime, host.StudioRuntime);
 			Voidstrap.Platform.OperationResult<Voidstrap.Platform.LaunchSession> result = await coordinator.LaunchAsync(runtimeKind, launchTarget);
@@ -1120,12 +1140,18 @@ public static class LaunchHandler
 				Voidstrap.UI.LinuxTaskbarPresence.HideWhileSessionRuns();
 			}
 		}
+		catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+		{
+			App.Logger.WriteLine("LaunchHandler::LaunchPortableRuntime", "The launch was cancelled");
+			ClosePortableLaunchDialog();
+		}
 		catch (Exception ex)
 		{
 			ShowPortableLaunchFailure("Roblox could not start: " + ex.Message);
 		}
 		finally
 		{
+			cancelRequested.Dispose();
 			Interlocked.Exchange(ref _portableLaunchActive, 0);
 			if (!stayResident)
 			{
@@ -1138,6 +1164,11 @@ public static class LaunchHandler
 
 	private static IBootstrapperDialog? _portableDialog;
     private static readonly char[] anyOf = new[] { '/', '?', '#', '&' };
+
+	private static void OnPortableLaunchCancelRequested()
+	{
+		SetPortableLaunchStatus("Cancelling");
+	}
 
     private static void ShowPortableLaunchDialog(Bootstrapper bootstrapper)
 	{
@@ -1159,7 +1190,7 @@ public static class LaunchHandler
 				IBootstrapperDialog dialog = App.Settings.Prop.BootstrapperStyle.GetNew();
 				dialog.Bootstrapper = bootstrapper;
 				bootstrapper.Dialog = dialog;
-				dialog.CancelEnabled = false;
+				dialog.CancelEnabled = true;
 				dialog.Message = FormatLaunchStatus(Strings.Bootstrapper_Status_Starting);
 				_portableDialog = dialog;
 				if (dialog is Window window)

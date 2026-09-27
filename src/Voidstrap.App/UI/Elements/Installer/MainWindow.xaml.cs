@@ -34,6 +34,8 @@ public partial class MainWindow : WpfUiWindow,INavigationWindow{
 
 	public Func<bool>? NextPageCallback;
 	public Func<System.Threading.Tasks.Task<bool>>? NextPageAsyncCallback;
+
+	public Action? CancelCallback;
 	private bool _navigating;
 
 	public NextAction CloseAction;
@@ -120,6 +122,7 @@ public partial class MainWindow : WpfUiWindow,INavigationWindow{
 		RootFrame.Content = null;
 		NextPageCallback = null;
 		NextPageAsyncCallback = null;
+		CancelCallback = null;
 		DataContext = null;
 	}
 
@@ -169,7 +172,9 @@ public partial class MainWindow : WpfUiWindow,INavigationWindow{
 		if (!Finished && Frontend.ShowMessageBox(Strings.Installer_ShouldCancel, MessageBoxImage.Exclamation, MessageBoxButton.YesNo) != MessageBoxResult.Yes)
 		{
 			e.Cancel = true;
+			return;
 		}
+		CancelCallback?.Invoke();
 	}
 
 	public void SetNextButtonText(string text)
@@ -197,6 +202,7 @@ public partial class MainWindow : WpfUiWindow,INavigationWindow{
 		_currentPage = pageType;
 		NextPageCallback = null;
 		NextPageAsyncCallback = null;
+		CancelCallback = null;
 		int index = _pages.IndexOf(pageType);
 		if (index < 0)
 			index = 0;

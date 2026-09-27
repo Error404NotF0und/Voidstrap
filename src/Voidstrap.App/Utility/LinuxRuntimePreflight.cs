@@ -98,21 +98,17 @@ public static class LinuxRuntimePreflight
 
 	private static bool HasVulkanDriver()
 	{
-		string? overrides = Environment.GetEnvironmentVariable("VK_ICD_FILENAMES")
-			?? Environment.GetEnvironmentVariable("VK_DRIVER_FILES");
-		if (!string.IsNullOrWhiteSpace(overrides))
-			return true;
-
-		foreach (string directory in new[]
+		foreach (string variable in new[] { "VK_DRIVER_FILES", "VK_ICD_FILENAMES", "VK_ADD_DRIVER_FILES" })
 		{
-			"/usr/share/vulkan/icd.d",
-			"/usr/local/share/vulkan/icd.d",
-			"/etc/vulkan/icd.d",
-			"/usr/lib/x86_64-linux-gnu/vulkan/icd.d"
-		})
+			if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(variable)))
+				return true;
+		}
+
+		foreach (string root in VulkanManifestRoots())
 		{
 			try
 			{
+				string directory = Path.Combine(root, "vulkan", "icd.d");
 				if (Directory.Exists(directory) && Directory.EnumerateFiles(directory, "*.json").GetEnumerator().MoveNext())
 					return true;
 			}
@@ -121,18 +117,36 @@ public static class LinuxRuntimePreflight
 			}
 		}
 
-		try
-		{
-			string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-			string local = Path.Combine(home, ".local", "share", "vulkan", "icd.d");
-			if (Directory.Exists(local) && Directory.EnumerateFiles(local, "*.json").GetEnumerator().MoveNext())
-				return true;
-		}
-		catch (Exception)
-		{
-		}
-
 		return false;
+	}
+
+	private static IEnumerable<string> VulkanManifestRoots()
+	{
+		string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+		yield return XdgHome("XDG_CONFIG_HOME", Path.Combine(home, ".config"));
+		foreach (string directory in XdgDirectories("XDG_CONFIG_DIRS", "/etc/xdg"))
+			yield return directory;
+		yield return "/etc";
+		yield return XdgHome("XDG_DATA_HOME", Path.Combine(home, ".local", "share"));
+		foreach (string directory in XdgDirectories("XDG_DATA_DIRS", "/usr/local/share:/usr/share"))
+			yield return directory;
+		yield return "/usr/local/share";
+		yield return "/usr/share";
+		yield return "/run/opengl-driver/share";
+		yield return "/run/opengl-driver-32/share";
+		yield return "/usr/lib/x86_64-linux-gnu";
+	}
+
+	private static string XdgHome(string variable, string fallback)
+	{
+		string? value = Environment.GetEnvironmentVariable(variable);
+		return !string.IsNullOrWhiteSpace(value) && Path.IsPathRooted(value) ? value : fallback;
+	}
+
+	private static string[] XdgDirectories(string variable, string fallback)
+	{
+		string? value = Environment.GetEnvironmentVariable(variable);
+		return (string.IsNullOrWhiteSpace(value) ? fallback : value).Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 	}
 
 	private static bool CanLoad(string library)

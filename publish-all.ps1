@@ -12,12 +12,52 @@ param(
     [switch]$SkipSolutionBuild,
     [switch]$AppImage,
     [switch]$SkipAppImage,
-    [switch]$LinuxPackages
+    [switch]$LinuxPackages,
+    [switch]$NoPause
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
+
+function Wait-BeforeClose {
+    if ($NoPause -or $env:CI -or [Console]::IsInputRedirected) {
+        return
+    }
+    try {
+        Write-Host ''
+        [void](Read-Host 'Press Enter to close this window')
+    } catch {
+    }
+}
+
+function Exit-Script {
+    param([int]$Code)
+
+    if ($Code -ne 0) {
+        Wait-BeforeClose
+    }
+    exit $Code
+}
+
+trap {
+    $failure = $_
+    Write-Host ''
+    Write-Host 'BUILD SCRIPT CRASHED' -ForegroundColor Red
+    Write-Host $failure.Exception.Message -ForegroundColor Red
+    if ($failure.InvocationInfo -and $failure.InvocationInfo.PositionMessage) {
+        Write-Host $failure.InvocationInfo.PositionMessage -ForegroundColor DarkGray
+    }
+    if ($failure.ScriptStackTrace) {
+        Write-Host $failure.ScriptStackTrace -ForegroundColor DarkGray
+    }
+    try {
+        Get-ChildItem -LiteralPath $PSScriptRoot -Recurse -File -Force -Filter 'PublishOutputs.*.txt' -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+    } catch {
+    }
+    Exit-Script 1
+}
 
 $IsWindowsHost = $env:OS -eq 'Windows_NT'
 $PathComparison = if ($IsWindowsHost) {
@@ -36,6 +76,7 @@ $WinProj   = [System.IO.Path]::GetFullPath((Join-Path $Root 'src/Voidstrap.App/V
 $CrossProj = [System.IO.Path]::GetFullPath((Join-Path $Root 'src/Voidstrap.Cross/Voidstrap.Cross.csproj'))
 $Sln       = [System.IO.Path]::GetFullPath((Join-Path $Root 'Voidstrap.sln'))
 $IsLinuxHost = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Linux)
+$LinuxPackagingTools = @('dpkg-deb', 'rpmbuild', 'flatpak', 'flatpak-builder')
 
 if ($Parallel -and $Sequential) {
     throw 'Parallel and Sequential cannot be selected together.'
@@ -73,7 +114,7 @@ function Stop-ProcessesUsingPath {
         if ([string]::IsNullOrWhiteSpace($exe)) { continue }
         if (-not $exe.StartsWith($normalized, $PathComparison)) { continue }
 
-        Write-Host "  Stopping $($proc.ProcessName) (pid $($proc.Id)) which is running from the output folder" -ForegroundColor DarkYellow
+        Write-Host "  Stopping $($proc.ProcessName) (pid $($proc.Id)) which is running from $Path" -ForegroundColor DarkYellow
         try {
             $proc.Kill()
             $null = $proc.WaitForExit(5000)
@@ -466,7 +507,7 @@ function New-PackagingShell {
 
     $tools = @()
     if ($Linux) {
-        $probe = 'for t in dpkg-deb rpmbuild flatpak flatpak-builder; do command -v $t >/dev/null 2>&1 && echo $t; done; true'
+        $probe = 'for t in ' + ($LinuxPackagingTools -join ' ') + '; do command -v $t >/dev/null 2>&1 && echo $t; done; true'
         $probeArgs = @($Prefix) + @('-c', $probe)
         $previousPreference = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
@@ -510,10 +551,14 @@ function Resolve-PackagingShell {
             $distros = @($listed |
                 ForEach-Object { ([string]$_).Replace([string][char]0, '').Trim() } |
                 Where-Object { $_ -and $_ -notmatch '^docker-desktop' })
+            $fallback = $null
             foreach ($distro in $distros) {
                 $shell = New-PackagingShell -Name "WSL $distro" -Command $wsl.Source -Prefix @('-d', $distro, '-e', 'bash') -Linux -Wsl
-                if ($shell) { return $shell }
+                if (-not $shell) { continue }
+                if (@($LinuxPackagingTools | Where-Object { $shell.Tools -notcontains $_ }).Count -eq 0) { return $shell }
+                if (-not $fallback) { $fallback = $shell }
             }
+            if ($fallback) { return $fallback }
         }
     }
 
@@ -813,8 +858,17 @@ function Test-DotNetSatisfiesSdk {
     if ([string]::IsNullOrWhiteSpace($Required)) { return $true }
     $parsedRequired = $null
     if (-not [version]::TryParse((($Required -split '-')[0]), [ref]$parsedRequired)) { return $true }
-    $listed = & $Candidate --list-sdks 2>$null
-    if ($LASTEXITCODE -ne 0 -or -not $listed) { return $false }
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $listed = & $Candidate --list-sdks 2>$null
+        $exitCode = $LASTEXITCODE
+    } catch {
+        return $false
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($exitCode -ne 0 -or -not $listed) { return $false }
     foreach ($line in $listed) {
         $token = ($line -split '\s+')[0]
         $parsed = $null
@@ -954,7 +1008,7 @@ if ($wantLinuxPackages -and $glibcLinuxTargets.Count -gt 0 -and -not $packagingS
     throw 'Linux packages require a Linux host, or Windows with a WSL distro.'
 }
 if ($wantLinuxPackages -and $glibcLinuxTargets.Count -gt 0) {
-    $missingTools = @('dpkg-deb', 'rpmbuild', 'flatpak', 'flatpak-builder') | Where-Object { $packagingShell.Tools -notcontains $_ }
+    $missingTools = $LinuxPackagingTools | Where-Object { $packagingShell.Tools -notcontains $_ }
     if ($missingTools) {
         throw "Linux packaging needs these tools in $($packagingShell.Name): $($missingTools -join ', ')."
     }
@@ -987,12 +1041,7 @@ if ($SkippedHostTargets.Count -gt 0) {
 }
 
 if ($IsWindowsHost -and @($Targets | Where-Object { $_.Key -eq 'windows' }).Count -gt 0) {
-    $runningVoidstrap = @(Get-Process -Name 'Voidstrap' -ErrorAction SilentlyContinue)
-    if ($runningVoidstrap.Count -gt 0) {
-        Write-Host 'Voidstrap.exe is running and may lock the Windows publish output.' -ForegroundColor Red
-        Write-Host 'Close Voidstrap, then run this build again.'
-        exit 1
-    }
+    Stop-ProcessesUsingPath $Root
 }
 
 if (-not $NoClean -and $RequestedAll -and (Test-Path -LiteralPath $Out)) {
@@ -1158,7 +1207,7 @@ if ($unexpectedFailure) {
     Remove-PublishManifests
     Write-Host ''
     Write-BuildOutcome -Title 'BUILD SCRIPT FAILED' -Color Red -Detail $unexpectedFailure.Exception.Message
-    exit 1
+    Exit-Script 1
 }
 
 Write-Host ''
@@ -1176,7 +1225,7 @@ if ($Failed.Count -gt 0) {
     Remove-PublishManifests
     Write-Host ''
     Write-BuildOutcome -Title "FAILED: $(($Failed | ForEach-Object { $_.Target.Name }) -join ', ')" -Color Red -IncludeArtifacts
-    exit 1
+    Exit-Script 1
 }
 
 $packageFailure = $null
@@ -1316,7 +1365,7 @@ if ($PackageNotes.Count -gt 0) {
 }
 if ($packageFailure) {
     Write-BuildOutcome -Title 'PACKAGE CREATION FAILED' -Color Red -Detail $packageFailure.Exception.Message -IncludeArtifacts
-    exit 1
+    Exit-Script 1
 }
 
 if ($PackageNotes.Count -gt 0) {

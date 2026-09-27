@@ -2968,7 +2968,7 @@ public partial class MainWindow : WpfUiWindow, INavigationWindow
         {
             Level = LogLevel.Warning
         };
-        DiscordRpcClient client = new DiscordRpcClient("1459679943498661910", pipe, logger, true, new NamedActivityPipe("Voidstrap " + VoidstrapPresence.PlatformName));
+        DiscordRpcClient client = DiscordIpc.CreateClient("1459679943498661910", pipe, logger, "Voidstrap " + VoidstrapPresence.PlatformName);
         client.OnReady += DiscordClient_OnReady;
         client.OnError += DiscordClient_OnError;
         client.OnConnectionFailed += DiscordClient_OnConnectionFailed;
@@ -3012,13 +3012,7 @@ public partial class MainWindow : WpfUiWindow, INavigationWindow
         client.OnReady -= DiscordClient_OnReady;
         client.OnError -= DiscordClient_OnError;
         client.OnConnectionFailed -= DiscordClient_OnConnectionFailed;
-        try
-        {
-            client.Dispose();
-        }
-        catch
-        {
-        }
+        DiscordIpc.Close(client);
     }
 
     private void DiscordClient_OnReady(object sender, ReadyMessage e)

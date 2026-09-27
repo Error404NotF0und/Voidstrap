@@ -167,6 +167,8 @@ public class Bootstrapper
 
     internal CancellationToken CancellationToken => _cancelTokenSource.Token;
 
+    internal bool CancellationHandledByCaller { get; init; }
+
     private readonly IAppData AppData;
 
     private IDisposable? _installLock;
@@ -1157,6 +1159,10 @@ public class Bootstrapper
         App.Logger.WriteLine("Bootstrapper::Cancel", "Cancelling launch...");
         _cancelTokenSource.Cancel();
         Dialog?.CancelEnabled = false;
+        if (CancellationHandledByCaller)
+        {
+            return;
+        }
         if (Volatile.Read(in _isInstalling) == 1)
         {
             _ = FinishInstallCancellationAsync();
@@ -1301,17 +1307,21 @@ public class Bootstrapper
         try
         {
             string stage = "Installing Sober";
+            Stopwatch elapsed = Stopwatch.StartNew();
+            string describe()
+            {
+                string time = (int)elapsed.Elapsed.TotalMinutes + ":" + elapsed.Elapsed.Seconds.ToString("00", CultureInfo.InvariantCulture);
+                return stage.Contains('%') ? stage + " (" + time + ")" : stage + ", this can take a few minutes (" + time + ")";
+            }
             Task<OperationResult> install = new LinuxSoberInstaller(host.Processes).InstallAsync(cancellationToken, message =>
             {
                 stage = message;
-                report?.Invoke(message);
+                report?.Invoke(describe());
             });
-            Stopwatch elapsed = Stopwatch.StartNew();
             while (!install.IsCompleted)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                report?.Invoke(stage + ", this can take a few minutes ("
-                    + (int)elapsed.Elapsed.TotalMinutes + ":" + elapsed.Elapsed.Seconds.ToString("00", CultureInfo.InvariantCulture) + ")");
+                report?.Invoke(describe());
                 await Task.WhenAny(install, Task.Delay(1000, cancellationToken));
             }
 

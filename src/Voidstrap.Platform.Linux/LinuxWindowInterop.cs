@@ -2564,6 +2564,33 @@ public static partial class LinuxWindowInterop
 		}
 	}
 
+	public static bool TrySetDialogWindowType(nint window)
+	{
+		nint display = Display;
+		if (display == 0 || window == 0)
+			return false;
+
+		try
+		{
+			nint typeAtom = XInternAtom(display, "_NET_WM_WINDOW_TYPE", false);
+			nint dialog = XInternAtom(display, "_NET_WM_WINDOW_TYPE_DIALOG", false);
+			if (typeAtom == 0 || dialog == 0)
+				return false;
+
+			XChangeProperty(display, window, typeAtom, 4, 32, 0, [dialog], 1);
+			_ = XFlush(display);
+			return true;
+		}
+		catch (DllNotFoundException)
+		{
+			return false;
+		}
+		catch (EntryPointNotFoundException)
+		{
+			return false;
+		}
+	}
+
 	public static bool TrySetAlwaysOnTop(nint window)
 	{
 		nint display = Display;

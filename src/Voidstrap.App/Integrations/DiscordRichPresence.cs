@@ -221,7 +221,7 @@ public partial class DiscordRichPresence : IDisposable
 			{
 				return;
 			}
-			DiscordRpcClient client = new DiscordRpcClient("1005469189907173486", pipe, null, true, null);
+			DiscordRpcClient client = DiscordIpc.CreateClient("1005469189907173486", pipe);
 			client.OnReady += OnClientReady;
 			client.OnPresenceUpdate += OnClientPresenceUpdate;
 			client.OnError += OnClientError;
@@ -258,13 +258,7 @@ public partial class DiscordRichPresence : IDisposable
 		client.OnConnectionEstablished -= OnClientConnectionEstablished;
 		client.OnConnectionFailed -= OnClientConnectionFailed;
 		client.OnClose -= OnClientClose;
-		try
-		{
-			client.Dispose();
-		}
-		catch
-		{
-		}
+		DiscordIpc.Close(client);
 	}
 
 	private void OnRefreshTimer(object? state)
@@ -1288,13 +1282,6 @@ public partial class DiscordRichPresence : IDisposable
 			DiscordRpcClient? client = _rpcClient;
 			if (client != null)
 			{
-				try
-				{
-					client.ClearPresence();
-				}
-				catch
-				{
-				}
 				ReleaseClient(client);
 			}
 			_messageQueue.Clear();

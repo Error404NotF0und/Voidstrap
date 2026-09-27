@@ -1,6 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using DiscordRPC;
+using DiscordRPC.Logging;
 
 namespace Voidstrap.Integrations;
 
@@ -9,6 +13,45 @@ internal static class DiscordIpc
 	internal static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(5);
 
 	internal static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(30);
+
+	private static readonly ConditionalWeakTable<DiscordRpcClient, DiscordActivityPipe> Pipes = new();
+
+	static DiscordIpc()
+	{
+		AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
+	}
+
+	internal static DiscordRpcClient CreateClient(string applicationId, int pipe, ILogger? logger = null, string? activityName = null)
+	{
+		DiscordActivityPipe transport = new(activityName);
+		DiscordRpcClient client = new(applicationId, pipe, logger, true, transport);
+		Pipes.AddOrUpdate(client, transport);
+		return client;
+	}
+
+	internal static void Close(DiscordRpcClient? client)
+	{
+		if (client == null)
+			return;
+
+		if (Pipes.TryGetValue(client, out DiscordActivityPipe? transport))
+			transport.ClearAndSeal();
+		try
+		{
+			client.Dispose();
+		}
+		catch (Exception ex) when (ex is not OutOfMemoryException)
+		{
+		}
+		Pipes.Remove(client);
+	}
+
+	private static void OnProcessExit(object? sender, EventArgs e)
+	{
+		AppDomain.CurrentDomain.ProcessExit -= OnProcessExit;
+		foreach (KeyValuePair<DiscordRpcClient, DiscordActivityPipe> entry in Pipes.ToArray())
+			entry.Value.ClearAndSeal();
+	}
 
 	private static readonly string[] SandboxDirectories =
 	{

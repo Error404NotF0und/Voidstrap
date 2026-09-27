@@ -52,13 +52,36 @@ internal static class LinuxWindowReveal
 		return true;
 	}
 
+	private static void PrepareDialog(System.Windows.Media.ProGPU.ProGpuWpfWindowHost host)
+	{
+		if (InitializeHidden is null)
+			return;
+
+		try
+		{
+			InitializeHidden.Invoke(host, null);
+			nint handle = host.SilkWindow?.Native?.X11 is { } x11 ? (nint)x11.Window : 0;
+			if (handle != 0)
+				Voidstrap.Platform.Linux.LinuxWindowInterop.TrySetDialogWindowType(handle);
+		}
+		catch (Exception ex)
+		{
+			App.Logger.WriteLine("LinuxWindowReveal", "Could not mark the launch window as a dialog: " + ex.Message);
+		}
+	}
+
 	internal static void Prepare(object window, System.Windows.Media.ProGPU.ProGpuWpfWindowHost host)
 	{
 		if (window is Window overlay && PrepareOverlay(overlay, host))
 			return;
 
+		bool dialog = window is IBootstrapperDialog;
 		if (Disabled || _sessionDisabled || Voidstrap.Utility.LinuxStartup.SafeMode || InitializeHidden is null || window is not Window wpf || wpf.AllowsTransparency || wpf.WindowState == System.Windows.WindowState.Minimized)
+		{
+			if (dialog)
+				PrepareDialog(host);
 			return;
+		}
 
 		nint handle = 0;
 		try
@@ -67,6 +90,9 @@ internal static class LinuxWindowReveal
 			handle = host.SilkWindow?.Native?.X11 is { } x11 ? (nint)x11.Window : 0;
 			if (handle == 0)
 				return;
+
+			if (dialog)
+				Voidstrap.Platform.Linux.LinuxWindowInterop.TrySetDialogWindowType(handle);
 
 			Voidstrap.Platform.Linux.LinuxWindowInterop.TrySetWindowBackground(handle, ResolveBackground());
 			if (!Voidstrap.Platform.Linux.LinuxWindowInterop.TrySetWindowOpacity(handle, 0.0))

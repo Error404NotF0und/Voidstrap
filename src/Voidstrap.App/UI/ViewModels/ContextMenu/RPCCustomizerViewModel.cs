@@ -499,13 +499,10 @@ public class RPCCustomizerViewModel : INotifyPropertyChanged, IDisposable
 				SafeUpdateStatus("Waiting for Discord...", Brushes.Orange);
 				return;
 			}
-			DiscordRpcClient discordRpcClient = new DiscordRpcClient(ApplicationId, pipe, null, true, null)
+			DiscordRpcClient discordRpcClient = Voidstrap.Integrations.DiscordIpc.CreateClient(ApplicationId, pipe, new Voidstrap.Integrations.DiscordRpcLogger("DiscordRichPresence::Customizer")
 			{
-				Logger = new Voidstrap.Integrations.DiscordRpcLogger("DiscordRichPresence::Customizer")
-				{
-					Level = LogLevel.Warning
-				}
-			};
+				Level = LogLevel.Warning
+			});
 			discordRpcClient.OnReady += OnClientReady;
 			discordRpcClient.OnClose += OnClientClose;
 			discordRpcClient.OnError += OnClientError;
@@ -606,20 +603,7 @@ public class RPCCustomizerViewModel : INotifyPropertyChanged, IDisposable
 		client.OnReady -= OnClientReady;
 		client.OnClose -= OnClientClose;
 		client.OnError -= OnClientError;
-		try
-		{
-			client.ClearPresence();
-		}
-		catch
-		{
-		}
-		try
-		{
-			client.Dispose();
-		}
-		catch
-		{
-		}
+		Voidstrap.Integrations.DiscordIpc.Close(client);
 	}
 
 	private static void ReplaceCancellation([System.Diagnostics.CodeAnalysis.NotNull] ref CancellationTokenSource? source)

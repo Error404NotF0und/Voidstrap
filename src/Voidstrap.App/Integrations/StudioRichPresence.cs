@@ -80,7 +80,7 @@ public sealed partial class StudioRichPresence : IDisposable
 		{
 			return;
 		}
-		DiscordRpcClient client = new DiscordRpcClient(_clientId, pipe, null, true, null);
+		DiscordRpcClient client = DiscordIpc.CreateClient(_clientId, pipe);
 		client.OnConnectionFailed += OnConnectionFailed;
 		_client = client;
 		_lastSignature = "";
@@ -112,13 +112,7 @@ public sealed partial class StudioRichPresence : IDisposable
 			return;
 		}
 		client.OnConnectionFailed -= OnConnectionFailed;
-		try
-		{
-			client.Dispose();
-		}
-		catch
-		{
-		}
+		DiscordIpc.Close(client);
 	}
 
 	private void OnPollTimer(object? sender, System.Timers.ElapsedEventArgs e)

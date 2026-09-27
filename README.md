@@ -68,14 +68,6 @@ irm https://voidstrapp.pages.dev/quick-install | iex
 >
 > As of Voidstrap Version `1.1.2.3`, Multi-Instance Launching has been removed from the app and will not be added back in the future.
 
-## Installation
-
-1. Download the latest version
-   👉 https://github.com/KloBraticc/Voidstrap/releases/latest
-2. Run the Exe and Finish the setup
-3. Launch Voidstrap
-4. Enjoy a more simple Roblox
-
 ## FAQ
 
 <details>
@@ -92,6 +84,43 @@ irm https://voidstrapp.pages.dev/quick-install | iex
   
   You can review the complete source code [here](https://github.com/KloBraticc/Voidstrap).
 </details>
+
+## Installation
+
+1. Download the latest version
+   👉 https://github.com/KloBraticc/Voidstrap/releases/latest
+2. Run the Exe and Finish the setup
+3. Launch Voidstrap
+4. Enjoy a more simple Roblox
+
+### Gentoo Linux
+
+Voidstrap is packaged for Gentoo in the [Voidstrap overlay](https://github.com/Pedrodroks34/voidstrap-overlay), maintained by [@Pedrodroks34](https://github.com/Pedrodroks34). It builds the latest code from the `main` branch and needs an amd64 system on a Gentoo desktop profile. Run these commands as root:
+
+1. Add the overlay:
+
+   ```bash
+   emerge --ask app-eselect/eselect-repository dev-vcs/git
+   eselect repository add Voidstrap-Overlay git https://github.com/Pedrodroks34/voidstrap-overlay.git
+   emaint sync --repo Voidstrap-Overlay
+   ```
+
+2. Allow the live package and the .NET SDK it is built with:
+
+   ```bash
+   mkdir -p /etc/portage/package.accept_keywords
+   printf '%s\n' 'games-action/voidstrap **' 'dev-dotnet/dotnet-sdk-bin ~amd64' > /etc/portage/package.accept_keywords/voidstrap
+   ```
+
+   If `/etc/portage/package.accept_keywords` is a file on your system, add those two lines to it instead.
+
+3. Build and install Voidstrap:
+
+   ```bash
+   emerge --ask games-action/voidstrap
+   ```
+
+To update to the latest code, run step 3 again.
 
 ## Built With
 

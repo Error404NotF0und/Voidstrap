@@ -266,7 +266,7 @@ namespace Voidstrap.Utility
 
                 if (!Voidstrap.Integrations.DiscordIpc.TryFindPipe(out int pipe))
                     return;
-                var rpc = new DiscordRpcClient("1005469189907173486", pipe, null, true, null);
+                var rpc = Voidstrap.Integrations.DiscordIpc.CreateClient("1005469189907173486", pipe);
                 rpc.Initialize();
                 rpc.SetPresenceSafe(new DiscordRPC.RichPresence
                 {
@@ -335,8 +335,7 @@ namespace Voidstrap.Utility
 
             RunOnUi(CloseOverlays);
 
-            try { rpc?.ClearPresence(); } catch { }
-            try { rpc?.Dispose(); } catch { }
+            Voidstrap.Integrations.DiscordIpc.Close(rpc);
 
             KillProcess(studio);
 

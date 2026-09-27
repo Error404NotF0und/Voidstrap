@@ -1011,6 +1011,8 @@ public sealed partial class LinuxSoberRuntimeProvider : IRobloxRuntimeProvider
 		Environment.GetEnvironmentVariable("HOME") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
 		".var", "app", SoberApplicationId, "data", "sober");
 
+	private static string RobloxPackageDirectory => Path.Combine(SoberDataDirectory, "packages", "x86_64", "com.roblox.client");
+
 	public static bool IsRobloxPackageInstalled()
 	{
 		try
@@ -1028,7 +1030,7 @@ public sealed partial class LinuxSoberRuntimeProvider : IRobloxRuntimeProvider
 				}
 			}
 
-			return File.Exists(Path.Combine(SoberDataDirectory, "packages", "x86_64", "com.roblox.client", "base.apk"));
+			return HasCompleteRobloxPackage();
 		}
 		catch (Exception ex) when (ex is System.Text.Json.JsonException or IOException)
 		{
@@ -1037,6 +1039,63 @@ public sealed partial class LinuxSoberRuntimeProvider : IRobloxRuntimeProvider
 		catch (Exception)
 		{
 			return true;
+		}
+	}
+
+	private static bool HasCompleteRobloxPackage()
+	{
+		string directory = RobloxPackageDirectory;
+		if (!Directory.Exists(directory))
+			return false;
+
+		string[] packages = Directory.GetFiles(directory, "*.apk");
+		return packages.Any(static package => string.Equals(Path.GetFileName(package), "base.apk", StringComparison.Ordinal))
+			&& packages.All(IsCompleteArchive);
+	}
+
+	private static bool IsCompleteArchive(string path)
+	{
+		try
+		{
+			using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+			int size = (int)Math.Min(stream.Length, 65557);
+			if (size < 22)
+				return false;
+
+			stream.Seek(-size, SeekOrigin.End);
+			byte[] tail = new byte[size];
+			stream.ReadExactly(tail);
+			for (int index = size - 22; index >= 0; index--)
+			{
+				if (tail[index] == 0x50 && tail[index + 1] == 0x4b && tail[index + 2] == 0x05 && tail[index + 3] == 0x06)
+					return true;
+			}
+
+			return false;
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			return false;
+		}
+	}
+
+	private static void RemoveInterruptedRobloxPackage()
+	{
+		try
+		{
+			string directory = RobloxPackageDirectory;
+			if (!Directory.Exists(directory))
+				return;
+
+			string[] packages = Directory.GetFiles(directory, "*.apk");
+			if (packages.Length == 0 || packages.All(IsCompleteArchive))
+				return;
+
+			foreach (string package in packages)
+				File.Delete(package);
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
 		}
 	}
 
@@ -1087,6 +1146,9 @@ public sealed partial class LinuxSoberRuntimeProvider : IRobloxRuntimeProvider
 		if (IsRobloxPackageInstalled())
 			return true;
 
+		if (!await IsSoberRunningAsync(cancellationToken).ConfigureAwait(false))
+			RemoveInterruptedRobloxPackage();
+
 		System.Diagnostics.Process? process = null;
 		bool installed = false;
 		Func<CancellationToken, Task<bool>>? assist = string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DISPLAY")) ? null : OnboardingAssist;
@@ -1129,6 +1191,10 @@ public sealed partial class LinuxSoberRuntimeProvider : IRobloxRuntimeProvider
 			}
 
 			return false;
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested && !installed)
+		{
+			throw;
 		}
 		catch (Exception)
 		{

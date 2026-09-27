@@ -33,6 +33,7 @@ public partial class InstallPage : UiPage{
 		{
 			mainWindow.SetNextButtonText(Strings.Common_Navigation_Install);
 			mainWindow.NextPageAsyncCallback = NextPageCallbackAsync;
+			mainWindow.CancelCallback = _viewModel.CancelSoberInstall;
 		}
 	}
 

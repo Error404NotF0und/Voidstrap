@@ -1746,6 +1746,9 @@ public partial class App : Application
 	{
 		LinuxUiPerformance.Shutdown();
 		UnregisterExceptionHandlers();
+		TryShutdown(StopCustomRpc);
+		TryShutdown(DisposeDiscordClient);
+		TryShutdown(DisposeMusicPlayer);
 		TryShutdown(VpnHttpClient.Shutdown);
 		TryShutdown(_lifetimeCancellation.Cancel);
 		TryShutdown(Voidstrap.Utility.ScreenColorEffect.Shutdown);
@@ -1778,9 +1781,6 @@ public partial class App : Application
 		TryShutdown(Voidstrap.Utility.DynamicRenderSystem.ClearCache);
 		TryShutdown(Settings.FlushDeferred);
 		TryShutdown(FastFlags.FlushDeferred);
-		TryShutdown(StopCustomRpc);
-		TryShutdown(DisposeDiscordClient);
-		TryShutdown(DisposeMusicPlayer);
 		TryShutdown(Voidstrap.Utility.AppNotifications.Shutdown);
 		TryShutdown(_httpClient.Dispose);
 		TryShutdown(_lifetimeCancellation.Dispose);

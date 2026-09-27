@@ -835,7 +835,7 @@ public partial class MusicPlayerViewModel : INotifyPropertyChanged, IDisposable
                 return;
             }
             _showRpcConnectedMessage = !isAutoReconnect;
-            _rpcClient = new DiscordRpcClient("1375529225230094507", pipe, null, true, null);
+            _rpcClient = Voidstrap.Integrations.DiscordIpc.CreateClient("1375529225230094507", pipe);
             _rpcClient.OnReady += RpcClient_OnReady;
             _rpcClient.OnError += RpcClient_OnError;
             _rpcClient.Initialize();
@@ -897,13 +897,7 @@ public partial class MusicPlayerViewModel : INotifyPropertyChanged, IDisposable
 
         client.OnReady -= RpcClient_OnReady;
         client.OnError -= RpcClient_OnError;
-        try
-        {
-            client.Dispose();
-        }
-        catch
-        {
-        }
+        Voidstrap.Integrations.DiscordIpc.Close(client);
     }
 
     private void UpdateRpcPresence(bool force = false)
