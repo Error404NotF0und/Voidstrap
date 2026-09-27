@@ -2,7 +2,7 @@
 agp = "9.4.1"
 appcompat = "1.8.0"
 material = "1.14.0"
-core = "1.19.0"
+core = "1.19.1"
 constraintlayout = "2.2.2"
 desugar = "2.1.5"
 appupdate = "2.1.0"
