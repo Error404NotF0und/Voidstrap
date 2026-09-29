@@ -13,7 +13,8 @@ internal static class VinegarConfigurationMapper
 			settings.VinegarApplyFastFlags && settings.UseFastFlagManager,
 			ApplyVirtualMachineProfile(CreateNativeOptions(settings)),
 			modsAllowed,
-			modsAllowed ? CollectManagedModSources() : null);
+			modsAllowed ? CollectManagedModSources() : null,
+			ModAutoFixer.IsIgnoredModFile);
 	}
 
 	private static List<LinuxModSource> CollectManagedModSources()

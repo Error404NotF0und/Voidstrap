@@ -213,6 +213,11 @@ public class NotifyIconWrapper : IDisposable
 		{
 			return;
 		}
+		if (Voidstrap.Utility.Platform.IsLinux && Voidstrap.Platform.Linux.SoberNativeSettings.IsServerLocationIndicatorEnabled())
+		{
+			App.Logger.WriteLine("NotifyIconWrapper::OnGameJoinAsync", "Sober shows its own server location notice, skipping the alert");
+			return;
+		}
 		string? text = await ActivityWatcher.Data.QueryServerLocation();
 		if (string.IsNullOrEmpty(text))
 		{

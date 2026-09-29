@@ -62,7 +62,7 @@ internal static class RobloxContentPlacer
 		{
 			return null;
 		}
-		string[] segments = relative.Split(Separator, StringSplitOptions.RemoveEmptyEntries);
+		string[] segments = relative.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
 		if (segments.Length == 0)
 		{
 			return null;
@@ -81,14 +81,14 @@ internal static class RobloxContentPlacer
 		{
 			if (FolderAnchors.TryGetValue(segments[index], out string? anchor))
 			{
-				candidate = anchor + Separator + string.Join(Separator, segments[(index + 1)..]);
+				candidate = Native(anchor) + Separator + string.Join(Separator, segments[(index + 1)..]);
 			}
 		}
 
 		string name = segments[^1];
 		if (candidate == null && KnownFiles.TryGetValue(name, out string? folder))
 		{
-			candidate = folder + Separator + name;
+			candidate = Native(folder) + Separator + name;
 		}
 		if (candidate == null)
 		{
@@ -96,7 +96,7 @@ internal static class RobloxContentPlacer
 			{
 				if (name.StartsWith(prefix.Key, StringComparison.OrdinalIgnoreCase))
 				{
-					candidate = prefix.Value + Separator + name;
+					candidate = Native(prefix.Value) + Separator + name;
 					break;
 				}
 			}
@@ -107,5 +107,10 @@ internal static class RobloxContentPlacer
 		}
 		string? fromClient = Voidstrap.Utility.RobloxLayoutRepair.ResolveUniqueName(name);
 		return fromClient ?? candidate;
+	}
+
+	private static string Native(string path)
+	{
+		return path.Replace('\\', Separator);
 	}
 }

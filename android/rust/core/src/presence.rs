@@ -5,6 +5,7 @@ const DOWNLOAD: &str = "https://github.com/KloBraticc/Voidstrap/releases";
 const DISCORD: &str = "https://discord.gg/bzdbHHytFR";
 const GITHUB: &str = "https://github.com/KloBraticc/Voidstrap";
 const LOGO: &str = "https://raw.githubusercontent.com/KloBraticc/Voidstrap/main/src/Voidstrap.App/Voidstrap.png";
+const LOADING: &str = "https://raw.githubusercontent.com/KloBraticc/Voidstrap/main/assets/Images/rpc-loading.gif";
 
 const IDLE: [(&str, &str); 3] = [
     ("blue", "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f2/Roblox_%282025%29_%28App_Icon%29.svg/250px-Roblox_%282025%29_%28App_Icon%29.svg.png"),
@@ -231,6 +232,9 @@ pub fn shown(custom: &str, name: &str) -> String {
 
 fn small(settings: &Value, account: &Value) -> (String, String) {
     let image = opt_str(account, "image", "");
+    if on(settings, "account") && image.is_empty() && on(settings, "loading") {
+        return (LOADING.to_string(), String::new());
+    }
     if !on(settings, "account") || image.is_empty() {
         return (LOGO.to_string(), "Voidstrap".to_string());
     }
@@ -284,9 +288,13 @@ pub fn game(settings: &Value, data: &Value, game: &Value, account: &Value, flag_
     let kind = opt_str(data, "serverType", "PUBLIC");
     let launch = opt_str(data, "launchData", "");
     let location = opt_str(game, "location", "");
+    let creator = opt_str(game, "creator", "");
     let mut details = Vec::new();
     if on(settings, "name") {
         details.push(name);
+    }
+    if on(settings, "creator") && !creator.is_empty() {
+        details.push(format!("by {creator}{}", if opt_bool(game, "verified", false) { " \u{2611}\u{fe0f}" } else { "" }));
     }
     if on(settings, "server") {
         details.push(match kind.as_str() {
@@ -305,15 +313,7 @@ pub fn game(settings: &Value, data: &Value, game: &Value, account: &Value, flag_
     if let Some(tag) = tag {
         detail = if detail.is_empty() { tag.to_string() } else { format!("{detail} {tag}") };
     }
-    let creator = opt_str(game, "creator", "");
-    let mut state = if on(settings, "creator") && !creator.is_empty() {
-        format!("by {creator}{}", if opt_bool(game, "verified", false) { " \u{2611}\u{fe0f}" } else { "" })
-    } else {
-        String::new()
-    };
-    if on(settings, "flagCount") {
-        state = if state.is_empty() { format!("FFlags: {flag_count}") } else { format!("{state} | FFlags: {flag_count}") };
-    }
+    let state = if on(settings, "flagCount") { format!("FFlags: {flag_count}") } else { String::new() };
     let custom_icon = trim(&opt_str(settings, "customIcon", "")).to_string();
     let icon = on(settings, "icon");
     let image = if !custom_icon.is_empty() { custom_icon.clone() } else if icon { opt_str(game, "icon", "") } else { String::new() };
@@ -409,7 +409,7 @@ pub fn app(a: &Value) -> Value {
         None => {
             let face = opt_str(&avatar, "image", "");
             let who = opt_str(&avatar, "text", "");
-            let small = if face.is_empty() { (String::new(), String::new()) } else { (face, if who.is_empty() { "Roblox".to_string() } else { who }) };
+            let small = if face.is_empty() && on(a, "loading") { (LOADING.to_string(), String::new()) } else if face.is_empty() { (String::new(), String::new()) } else { (face, if who.is_empty() { "Roblox".to_string() } else { who }) };
             (LOGO.to_string(), version, small)
         }
     };

@@ -104,9 +104,14 @@ internal static class LinuxSnapTap
 
 		private readonly OpposingKeyResolver _resolver = new();
 		private readonly List<RoutedKey> _routed = new(16);
+		private const long FocusCacheMilliseconds = 2000;
+
 		private volatile Settings? _pending;
 		private bool _focused;
 		private bool _swapReported;
+		private nint _focusWindow;
+		private bool _focusResult;
+		private long _focusCheckedAt;
 
 		public void Configure(List<int[]> groups, OpposingKeyPriority priority)
 		{
@@ -115,7 +120,20 @@ internal static class LinuxSnapTap
 
 		public bool IsTargetFocused()
 		{
-			bool focused = LinuxWindowInterop.IsRuntimeWindowActive();
+			nint active = LinuxWindowInterop.GetActiveTopLevelWindow();
+			long now = Environment.TickCount64;
+			bool focused;
+			if (active != 0 && active == _focusWindow && now - _focusCheckedAt < FocusCacheMilliseconds)
+			{
+				focused = _focusResult;
+			}
+			else
+			{
+				focused = active != 0 && LinuxWindowInterop.IsRuntimeWindowHandle(active);
+				_focusWindow = active;
+				_focusResult = focused;
+				_focusCheckedAt = now;
+			}
 			if (focused != _focused)
 				_swapReported = false;
 			_focused = focused;

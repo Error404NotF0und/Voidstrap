@@ -16,7 +16,7 @@ namespace Voidstrap.UI.Elements.ContextMenu
             DataContext = dataContext;
             Title = WindowTitle;
             Width = 420;
-            Height = 300;
+            Height = 170;
             ResizeMode = ResizeMode.NoResize;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             Background = new SolidColorBrush(Color.FromRgb(0x20, 0x20, 0x20));
@@ -24,9 +24,6 @@ namespace Voidstrap.UI.Elements.ContextMenu
             StackPanel root = new() { Margin = new Thickness(18) };
 
             root.Children.Add(BuildRow("Brightness", "Brightness", 0, 100));
-            root.Children.Add(BuildRow("Saturation", "Saturation", 0, 200));
-            root.Children.Add(BuildRow("Contrast", "Contrast", 0, 200));
-            root.Children.Add(BuildRow("Color temperature", "ColorTemperature", -100, 100));
 
             Button close = new()
             {
@@ -41,6 +38,7 @@ namespace Voidstrap.UI.Elements.ContextMenu
             root.Children.Add(close);
 
             Content = root;
+            Voidstrap.UI.LinuxWindowUpdatePump.Attach(this);
         }
 
         private void OnCloseClicked(object sender, RoutedEventArgs e)

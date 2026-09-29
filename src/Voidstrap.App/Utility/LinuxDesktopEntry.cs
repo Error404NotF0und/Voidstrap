@@ -31,6 +31,22 @@ internal static class LinuxDesktopEntry
 	private static string LauncherPath => Path.Combine(
 		Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "bin", LauncherFileName);
 
+	internal static string? InstalledTarget()
+	{
+		try
+		{
+			FileInfo launcher = new(LauncherPath);
+			if (launcher.LinkTarget == null)
+				return null;
+			string? target = launcher.ResolveLinkTarget(true)?.FullName;
+			return target != null && File.Exists(target) ? Path.GetFullPath(target) : null;
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			return null;
+		}
+	}
+
 	public static void EnsureInstalled(string executablePath)
 	{
 		if (!Platform.IsLinux || LinuxFlatpakHost.IsSandboxed || string.IsNullOrEmpty(executablePath))
@@ -55,10 +71,10 @@ internal static class LinuxDesktopEntry
 		catch
 		{
 		}
-		Install(executablePath, false);
+		Install(executablePath, false, false);
 	}
 
-	public static void Install(string executablePath, bool createDesktopShortcut = false)
+	public static void Install(string executablePath, bool createDesktopShortcut = false, bool replaceInstalledLauncher = true)
 	{
 		if (!Platform.IsLinux || LinuxFlatpakHost.IsSandboxed || string.IsNullOrEmpty(executablePath))
 		{
@@ -66,7 +82,7 @@ internal static class LinuxDesktopEntry
 		}
 		try
 		{
-			string launchPath = EnsureLauncher(executablePath);
+			string launchPath = EnsureLauncher(executablePath, replaceInstalledLauncher);
 			Directory.CreateDirectory(ApplicationsDirectory);
 			Directory.CreateDirectory(IconDirectory);
 
@@ -275,8 +291,66 @@ internal static class LinuxDesktopEntry
 		}
 	}
 
+	internal static byte[]? ReadTrayIconPng()
+	{
+		byte[]? selected = ReadSelectedIconPng();
+		if (selected != null)
+			return selected;
+
+		try
+		{
+			StreamResourceInfo? info = Application.GetResourceStream(new Uri("pack://application:,,,/Voidstrap.png", UriKind.Absolute));
+			if (info?.Stream == null)
+				return null;
+			using Stream source = info.Stream;
+			using MemoryStream buffer = new();
+			source.CopyTo(buffer);
+			return buffer.ToArray();
+		}
+		catch (Exception ex)
+		{
+			App.Logger?.WriteLine("LinuxDesktopEntry::ReadTrayIconPng", "Could not read the bundled icon: " + ex.Message);
+			return null;
+		}
+	}
+
+	internal static string InstalledIconName()
+	{
+		List<string> roots = [Path.Combine(DataHome, "icons")];
+		string? dataDirectories = Environment.GetEnvironmentVariable("XDG_DATA_DIRS");
+		foreach (string directory in (string.IsNullOrWhiteSpace(dataDirectories) ? "/usr/local/share:/usr/share" : dataDirectories).Split(':', StringSplitOptions.RemoveEmptyEntries))
+			roots.Add(Path.Combine(directory, "icons"));
+
+		foreach (string root in roots)
+		{
+			string theme = Path.Combine(root, "hicolor");
+			try
+			{
+				if (!Directory.Exists(theme))
+					continue;
+				foreach (string size in Directory.EnumerateDirectories(theme))
+				{
+					string applications = Path.Combine(size, "apps");
+					if (File.Exists(Path.Combine(applications, IconName + ".png")) || File.Exists(Path.Combine(applications, IconName + ".svg")))
+						return IconName;
+				}
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			{
+			}
+		}
+
+		return string.Empty;
+	}
+
+	internal static string DesktopEntryId => Path.GetFileNameWithoutExtension(EntryFileName);
+
 	public static void RefreshIcon()
 	{
+#if CROSSPLAT
+		if (Platform.IsLinux)
+			Voidstrap.UI.Tray.LinuxTray.UpdateIcon(ReadTrayIconPng());
+#endif
 		if (!Platform.IsLinux || LinuxFlatpakHost.IsSandboxed)
 			return;
 
@@ -341,7 +415,7 @@ internal static class LinuxDesktopEntry
 		}
 	}
 
-	private static string EnsureLauncher(string executablePath)
+	private static string EnsureLauncher(string executablePath, bool replaceInstalled = false)
 	{
 		try
 		{
@@ -355,6 +429,16 @@ internal static class LinuxDesktopEntry
 			FileInfo existing = new(LauncherPath);
 			if (existing.Exists && existing.LinkTarget == null)
 				return target;
+			if (existing.LinkTarget != null && (!replaceInstalled || IsVolatileLocation(target)))
+			{
+				string? current = existing.ResolveLinkTarget(true)?.FullName;
+				if (current != null && File.Exists(current) && !IsVolatileLocation(current))
+				{
+					if (!string.Equals(Path.GetFullPath(current), target, StringComparison.Ordinal))
+						App.Logger?.WriteLine("LinuxDesktopEntry::EnsureLauncher", "The launcher keeps pointing at the installed copy " + current);
+					return LauncherPath;
+				}
+			}
 
 			string temporary = LauncherPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
 			try
@@ -375,6 +459,22 @@ internal static class LinuxDesktopEntry
 			App.Logger?.WriteLine("LinuxDesktopEntry::EnsureLauncher", "Could not refresh the stable launcher: " + ex.Message);
 			return executablePath;
 		}
+	}
+
+	internal static bool IsVolatileLocation(string path)
+	{
+		string full = Path.GetFullPath(path);
+		List<string> roots = ["/tmp/", "/dev/shm/", Path.GetTempPath()];
+		string? runtime = Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR");
+		if (!string.IsNullOrWhiteSpace(runtime))
+			roots.Add(runtime);
+		foreach (string root in roots)
+		{
+			string prefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar;
+			if (full.StartsWith(prefix, StringComparison.Ordinal))
+				return true;
+		}
+		return false;
 	}
 
 	private static string ResolvePackagedLauncher(string target)

@@ -127,7 +127,9 @@ public static class RoundedWindowChrome
 		window.StateChanged += OnWindowStateChanged;
 		window.Closed -= OnWindowClosed;
 		window.Closed += OnWindowClosed;
-		if (window.ResizeMode == ResizeMode.CanResize || window.ResizeMode == ResizeMode.CanResizeWithGrip)
+		if (window.ResizeMode == ResizeMode.CanResize
+			|| window.ResizeMode == ResizeMode.CanResizeWithGrip
+			|| Voidstrap.Utility.Platform.IsLinux && window.WindowState == System.Windows.WindowState.Maximized)
 		{
 			WindowEdgeResizer.Attach(window);
 		}
@@ -369,7 +371,7 @@ public static class RoundedWindowChrome
 			return;
 		}
 
-		double available = window.ActualWidth;
+		double available = window.ActualWidth / LinuxInterfaceScale.For(window);
 		if (double.IsNaN(available) || available <= 0.0)
 		{
 			available = stored.Value;
@@ -424,7 +426,7 @@ public static class RoundedWindowChrome
 			{
 				return;
 			}
-			double target = window.Width;
+			double target = window.Width / LinuxInterfaceScale.For(window);
 			if (double.IsNaN(target) || target <= 0.0)
 			{
 				return;
@@ -455,6 +457,7 @@ public static class RoundedWindowChrome
 				scale = 1.0;
 			double width = window.ActualWidth * scale;
 			double height = window.ActualHeight * scale;
+			double chromeScale = scale * LinuxInterfaceScale.For(window);
 
 			nint handle = LinuxWindowMode.ResolveNativeWindow(window);
 
@@ -474,17 +477,17 @@ public static class RoundedWindowChrome
 			if (IsMaximizedOrFullscreen(window) || width <= 0.0 || height <= 0.0)
 			{
 				Voidstrap.Platform.Linux.LinuxWindowInterop.TryClearShape(handle);
-				TrackShadow(window, handle, 0, scale, true);
+				TrackShadow(window, handle, 0, chromeScale, true);
 				return;
 			}
 
-			int radius = (int)Math.Round(CornerRadius * scale);
+			int radius = (int)Math.Round(CornerRadius * chromeScale);
 			bool rounded = Voidstrap.Platform.Linux.LinuxWindowInterop.TrySetRoundedCorners(
 				handle,
 				(int)Math.Round(width),
 				(int)Math.Round(height),
 				radius);
-			TrackShadow(window, handle, rounded ? radius : 0, scale, false);
+			TrackShadow(window, handle, rounded ? radius : 0, chromeScale, false);
 
 			if (report)
 			{
@@ -546,7 +549,8 @@ public static class RoundedWindowChrome
 			window.Clip = null;
 			return;
 		}
-		RectangleGeometry geometry = new(new Rect(0.0, 0.0, width, height), CornerRadius, CornerRadius);
+		double radius = CornerRadius * LinuxInterfaceScale.For(window);
+		RectangleGeometry geometry = new(new Rect(0.0, 0.0, width, height), radius, radius);
 		geometry.Freeze();
 		window.Clip = geometry;
 

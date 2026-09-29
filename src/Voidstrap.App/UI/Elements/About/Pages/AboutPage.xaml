@@ -84,6 +84,11 @@
     <TextBlock Style="{StaticResource AboutSectionTitle}" Text="Main Contributors" />
     <TextBlock Style="{StaticResource AboutSectionSubtitle}" Text="The people who made Voidstrap possible." />
     <UniformGrid Margin="-4,6,-4,0" Columns="2">
+      <UniformGrid.Resources>
+        <Style TargetType="{x:Type ui:Card}" BasedOn="{StaticResource {x:Type ui:Card}}">
+          <Setter Property="VerticalAlignment" Value="Stretch" />
+        </Style>
+      </UniformGrid.Resources>
       <ui:Card Margin="4" Padding="12">
         <Grid>
           <Grid.ColumnDefinitions>

@@ -210,7 +210,9 @@ internal static partial class LegacyMaterialTextures
 			RemoveGenerated();
 			return;
 		}
-		string executable = Path.Combine(clientFolder, "RobloxPlayerBeta.exe");
+		string executable = Platform.IsLinux
+			? FindSoberNativePackage() ?? Path.Combine(clientFolder, "libroblox.so")
+			: Path.Combine(clientFolder, "RobloxPlayerBeta.exe");
 		string signature = BuildSignature(sources, executable);
 		if (File.Exists(ConfigPath) && File.Exists(SignaturePath) && string.Equals(File.ReadAllText(SignaturePath), signature, StringComparison.Ordinal))
 		{
@@ -275,23 +277,24 @@ internal static partial class LegacyMaterialTextures
 		{
 			try
 			{
-				string terrain = Path.Combine(folder, "PlatformContent", "pc", "terrain");
-				if (sources.TerrainColor == null && File.Exists(Path.Combine(terrain, "diffusearray.dds")))
+				string? terrain = FindPath(folder, "PlatformContent", "pc", "terrain");
+				string? terrainColor = terrain == null ? null : FindPath(terrain, "diffusearray.dds");
+				if (sources.TerrainColor == null && terrainColor != null && File.Exists(terrainColor))
 				{
-					sources.TerrainColor = Path.Combine(terrain, "diffusearray.dds");
-					string table = Path.Combine(terrain, "materials.json");
-					sources.TerrainTable = File.Exists(table) ? table : null;
+					sources.TerrainColor = terrainColor;
+					string? table = FindPath(terrain!, "materials.json");
+					sources.TerrainTable = table != null && File.Exists(table) ? table : null;
 				}
-				string textures = Path.Combine(folder, "PlatformContent", "pc", "textures");
-				if (!Directory.Exists(textures))
+				string? textures = FindPath(folder, "PlatformContent", "pc", "textures");
+				if (textures == null || !Directory.Exists(textures))
 				{
 					continue;
 				}
 				foreach (string materialFolder in Directory.EnumerateDirectories(textures))
 				{
 					string name = Path.GetFileName(materialFolder);
-					string diffuse = Path.Combine(materialFolder, "diffuse.dds");
-					if (NonMaterialFolders.Contains(name) || sources.Materials.ContainsKey(name) || !File.Exists(diffuse))
+					string? diffuse = FindPath(materialFolder, "diffuse.dds");
+					if (NonMaterialFolders.Contains(name) || sources.Materials.ContainsKey(name) || diffuse == null || !File.Exists(diffuse))
 					{
 						continue;
 					}
@@ -304,6 +307,87 @@ internal static partial class LegacyMaterialTextures
 			}
 		}
 		return sources;
+	}
+
+	private static string? FindPath(string root, params string[] segments)
+	{
+		string current = root;
+		foreach (string segment in segments)
+		{
+			string candidate = Path.Combine(current, segment);
+			if (File.Exists(candidate) || Directory.Exists(candidate))
+			{
+				current = candidate;
+				continue;
+			}
+			if (!Directory.Exists(current))
+			{
+				return null;
+			}
+			string? match = Directory.EnumerateFileSystemEntries(current)
+				.Where(entry => string.Equals(Path.GetFileName(entry), segment, StringComparison.OrdinalIgnoreCase))
+				.Order(StringComparer.Ordinal)
+				.FirstOrDefault();
+			if (match == null)
+			{
+				return null;
+			}
+			current = match;
+		}
+		return current;
+	}
+
+	private static string? FindSoberNativePackage()
+	{
+		string home = Environment.GetEnvironmentVariable("HOME") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+		string packages = Path.Combine(home, ".var", "app", "org.vinegarhq.Sober", "data", "sober", "packages");
+		if (!Directory.Exists(packages))
+		{
+			return null;
+		}
+		try
+		{
+			foreach (string package in Directory.EnumerateFiles(packages, "*.apk", SearchOption.AllDirectories).Order(StringComparer.Ordinal))
+			{
+				if (!string.Equals(Path.GetFileName(Path.GetDirectoryName(package)), "com.roblox.client", StringComparison.Ordinal))
+				{
+					continue;
+				}
+				using System.IO.Compression.ZipArchive archive = System.IO.Compression.ZipFile.OpenRead(package);
+				if (archive.Entries.Any(IsNativeClientLibrary))
+				{
+					return package;
+				}
+			}
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+		{
+			App.Logger?.WriteLine(LogIdent, "The Sober Roblox package could not be searched for the client library: " + ex.Message);
+		}
+		return null;
+	}
+
+	private static bool IsNativeClientLibrary(System.IO.Compression.ZipArchiveEntry entry)
+	{
+		return entry.FullName.StartsWith("lib/", StringComparison.Ordinal) && entry.FullName.EndsWith("/libroblox.so", StringComparison.Ordinal);
+	}
+
+	private static byte[] ReadClientBinary(string path)
+	{
+		if (!path.EndsWith(".apk", StringComparison.OrdinalIgnoreCase))
+		{
+			return File.ReadAllBytes(path);
+		}
+		using System.IO.Compression.ZipArchive archive = System.IO.Compression.ZipFile.OpenRead(path);
+		System.IO.Compression.ZipArchiveEntry? entry = archive.Entries.FirstOrDefault(IsNativeClientLibrary);
+		if (entry == null)
+		{
+			return [];
+		}
+		byte[] data = new byte[entry.Length];
+		using Stream stream = entry.Open();
+		stream.ReadExactly(data);
+		return data;
 	}
 
 	private static string BuildSignature(Sources sources, string executable)
@@ -372,7 +456,7 @@ internal static partial class LegacyMaterialTextures
 			{
 				return catalog.Embedded;
 			}
-			byte[] data = File.ReadAllBytes(executable);
+			byte[] data = ReadClientBinary(executable);
 			ReadOnlySpan<byte> marker = "rbxassetid://"u8;
 			HashSet<long> ids = [];
 			ReadOnlySpan<byte> span = data;
@@ -400,7 +484,7 @@ internal static partial class LegacyMaterialTextures
 			catalog.Embedded = [.. ids.Order()];
 			return catalog.Embedded;
 		}
-		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or OutOfMemoryException)
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or OutOfMemoryException or InvalidDataException)
 		{
 			App.Logger?.WriteLine(LogIdent, "The Roblox client could not be scanned for material packs: " + ex.Message);
 			return [];

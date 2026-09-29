@@ -114,7 +114,105 @@ internal static class LinuxInlineText
 	private static void OnTextBlockLoaded(object sender, RoutedEventArgs e)
 	{
 		if (sender is TextBlock block)
+		{
+			FlattenEmbeddedLinkText(block);
 			AttachLinkRouting(block);
+		}
+	}
+
+	internal static void PrepareLinks(TextBlock block)
+	{
+		if (!Voidstrap.Utility.Platform.IsLinux || !ContainsHyperlink(block))
+			return;
+
+		FlattenEmbeddedLinkText(block);
+		AttachLinkRouting(block);
+	}
+
+	internal static bool FlattenEmbeddedLinkText(TextBlock block)
+	{
+		if (!Voidstrap.Utility.Platform.IsLinux || block.Inlines.Count == 0)
+			return false;
+
+		bool changed = false;
+		try
+		{
+			foreach (Inline inline in new List<Inline>(block.Inlines))
+				changed |= FlattenEmbeddedLinkText(inline, false);
+		}
+		catch (Exception ex)
+		{
+			App.Logger?.WriteException("LinuxInlineText::FlattenEmbeddedLinkText", ex);
+		}
+
+		return changed;
+	}
+
+	private static bool FlattenEmbeddedLinkText(Inline inline, bool insideLink)
+	{
+		if (inline is not Span span)
+			return false;
+
+		bool link = insideLink || span is Hyperlink;
+		bool changed = false;
+		foreach (Inline child in new List<Inline>(span.Inlines))
+		{
+			if (link && child is InlineUIContainer { Child: TextBlock inner } container && IsPlainText(inner))
+			{
+				span.Inlines.InsertBefore(container, CreateRun(inner));
+				container.Child = null;
+				span.Inlines.Remove(container);
+				changed = true;
+				continue;
+			}
+
+			changed |= FlattenEmbeddedLinkText(child, link);
+		}
+
+		return changed;
+	}
+
+	private static bool IsPlainText(TextBlock inner)
+	{
+		if (System.Windows.Data.BindingOperations.GetBindingBase(inner, TextBlock.TextProperty) is not null)
+			return true;
+
+		foreach (Inline inline in inner.Inlines)
+		{
+			if (inline is not Run)
+				return false;
+		}
+
+		return true;
+	}
+
+	private static Run CreateRun(TextBlock inner)
+	{
+		Run run = new();
+		if (System.Windows.Data.BindingOperations.GetBindingBase(inner, TextBlock.TextProperty) is { } binding)
+			run.SetBinding(Run.TextProperty, binding);
+		else
+			run.Text = inner.Text;
+
+		CopyLocalValue(inner, run, TextBlock.FontSizeProperty, TextElement.FontSizeProperty);
+		CopyLocalValue(inner, run, TextBlock.FontWeightProperty, TextElement.FontWeightProperty);
+		CopyLocalValue(inner, run, TextBlock.FontStyleProperty, TextElement.FontStyleProperty);
+		CopyLocalValue(inner, run, TextBlock.FontFamilyProperty, TextElement.FontFamilyProperty);
+		CopyLocalValue(inner, run, TextBlock.ForegroundProperty, TextElement.ForegroundProperty);
+		return run;
+	}
+
+	private static void CopyLocalValue(TextBlock source, Run target, DependencyProperty from, DependencyProperty to)
+	{
+		if (System.Windows.Data.BindingOperations.GetBindingBase(source, from) is { } binding)
+		{
+			target.SetBinding(to, binding);
+			return;
+		}
+
+		object value = source.ReadLocalValue(from);
+		if (value != DependencyProperty.UnsetValue && value is not System.Windows.Expression)
+			target.SetValue(to, value);
 	}
 
 	internal static void AttachLinkRouting(TextBlock block)

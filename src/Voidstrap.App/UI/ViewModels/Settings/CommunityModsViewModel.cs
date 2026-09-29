@@ -882,17 +882,9 @@ public class CommunityModsViewModel : NotifyPropertyChangedViewModel, IDisposabl
 		{
 			return;
 		}
-		try
+		if (!Voidstrap.Utility.PlatformShell.TryOpenUrl(url))
 		{
-			using System.Diagnostics.Process? process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-			{
-				FileName = url,
-				UseShellExecute = true
-			});
-		}
-		catch (Exception ex)
-		{
-			App.Logger.WriteLine(LogIdent, "The link could not be opened: " + ex.Message);
+			App.Logger.WriteLine(LogIdent, "The link could not be opened: " + url);
 		}
 	}
 

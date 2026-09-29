@@ -186,7 +186,7 @@ public class Logger : IDisposable
 	{
 		string text = DateTime.UtcNow.ToString("s") + "Z";
 		string boundedBody = body.Length > MaxEntryCharacters ? body.Substring(0, MaxEntryCharacters) : body;
-		string text2 = string.IsNullOrEmpty(Paths.UserProfile) ? boundedBody : boundedBody.Replace(Paths.UserProfile, "%UserProfile%", StringComparison.InvariantCultureIgnoreCase);
+		string text2 = string.IsNullOrEmpty(Paths.UserProfile) ? boundedBody : OperatingSystem.IsWindows() ? boundedBody.Replace(Paths.UserProfile, "%UserProfile%", StringComparison.InvariantCultureIgnoreCase) : boundedBody.Replace(Paths.UserProfile, "~", StringComparison.Ordinal);
 		string text3 = text + " " + text2;
 		bool flag;
 		lock (_historyLock)

@@ -19,11 +19,25 @@ namespace Voidstrap.UI.Chat
                 if (SetProperty(ref _brightness, clamped))
                 {
                     App.Settings.Prop.Brightness = clamped;
-                    App.Settings.Save();
+                    if (Voidstrap.Utility.Platform.IsLinux)
+                    {
+                        App.Settings.SaveDeferred();
+                        Voidstrap.Watcher.Current?.ApplyBrightnessLive();
+                    }
+                    else
+                    {
+                        App.Settings.Save();
+                    }
                     OnPropertyChanged(nameof(BrightnessDisplay));
                     Voidstrap.Utility.ScreenColorEffect.ApplyConfigured();
                 }
             }
+        }
+
+        internal void SyncAdjustmentsFromSettings()
+        {
+            if (SetProperty(ref _brightness, Math.Clamp(App.Settings.Prop.Brightness, 0, 100), nameof(Brightness)))
+                OnPropertyChanged(nameof(BrightnessDisplay));
         }
 
         public string BrightnessDisplay =>

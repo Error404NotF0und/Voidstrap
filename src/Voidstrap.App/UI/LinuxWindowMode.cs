@@ -25,6 +25,7 @@ internal static class LinuxWindowMode
 		public System.Windows.WindowState WindowState;
 		public Rect RestoreBounds;
 		public bool NormalGeometryValid;
+		public long MinimizeRequestedAt = long.MinValue;
 		public int NormalLeft;
 		public int NormalTop;
 		public int NormalWidth;
@@ -38,6 +39,8 @@ internal static class LinuxWindowMode
 	}
 
 	private static readonly ConditionalWeakTable<Window, WindowModeState> States = new();
+
+	private const long MinimizeSettleMilliseconds = 1000;
 
 	public static void Attach(Window window)
 	{
@@ -156,10 +159,13 @@ internal static class LinuxWindowMode
 
 	private static void OnActivated(object? sender, EventArgs e)
 	{
+		if (sender is Window activated && !activated.IsKeyboardFocusWithin)
+			Keyboard.Focus(activated);
 		if (sender is not Window window
 			|| window.WindowState != System.Windows.WindowState.Minimized
 			|| !States.TryGetValue(window, out WindowModeState? state)
-			|| state.Fullscreen)
+			|| state.Fullscreen
+			|| Environment.TickCount64 - state.MinimizeRequestedAt < MinimizeSettleMilliseconds)
 			return;
 		nint nativeWindow = ResolveNativeWindow(window);
 		bool maximized = nativeWindow != 0 && IsMaximizedSurface(nativeWindow);
@@ -266,7 +272,11 @@ internal static class LinuxWindowMode
 
 	private static void OnStateChanged(object? sender, EventArgs e)
 	{
-		if (sender is Window window && !IsFullscreen(window))
+		if (sender is not Window window)
+			return;
+		if (window.WindowState == System.Windows.WindowState.Minimized && States.TryGetValue(window, out WindowModeState? state))
+			state.MinimizeRequestedAt = Environment.TickCount64;
+		if (!IsFullscreen(window))
 			RequestMaximizeSynchronization(window);
 	}
 
@@ -277,13 +287,41 @@ internal static class LinuxWindowMode
 			|| state.ApplyingManagedState
 			|| state.Fullscreen)
 			return;
-		bool maximized = window.WindowState == System.Windows.WindowState.Maximized;
-		if (maximized == IsMaximized(window))
+		bool surfaceMaximized = IsMaximized(window);
+		if (window.WindowState == System.Windows.WindowState.Maximized)
+		{
+			if (surfaceMaximized && !state.NormalGeometryValid)
+				CaptureRequestedGeometry(window, state);
+			SetMaximized(window, state, true, !surfaceMaximized);
+			return;
+		}
+		if (!surfaceMaximized)
 		{
 			RoundedWindowChrome.Refresh(window);
 			return;
 		}
-		SetMaximized(window, state, maximized);
+		SetMaximized(window, state, false);
+	}
+
+	private static void CaptureRequestedGeometry(Window window, WindowModeState state)
+	{
+		double width = window.Width;
+		double height = window.Height;
+		if (!double.IsFinite(width) || !double.IsFinite(height) || width <= 0.0 || height <= 0.0)
+			return;
+		double scale = GetScale(window);
+		int nativeWidth = (int)Math.Round(width * scale);
+		int nativeHeight = (int)Math.Round(height * scale);
+		LinuxDisplayBounds workArea = LinuxDisplayMetrics.Current.WorkArea;
+		state.NormalGeometryValid = true;
+		state.NormalWidth = nativeWidth;
+		state.NormalHeight = nativeHeight;
+		state.NormalLeft = double.IsFinite(window.Left) && window.Left > 0.0
+			? (int)Math.Round(window.Left * scale)
+			: workArea.Left + Math.Max(0, (workArea.Width - nativeWidth) / 2);
+		state.NormalTop = double.IsFinite(window.Top) && window.Top > 0.0
+			? (int)Math.Round(window.Top * scale)
+			: workArea.Top + Math.Max(0, (workArea.Height - nativeHeight) / 2);
 	}
 
 	private static void SetMaximized(Window window, WindowModeState state, bool maximized, bool captureNormal = true)
@@ -465,7 +503,6 @@ internal static class LinuxWindowMode
 		}
 		if (state.NativeWindow != 0)
 			LinuxWindowInterop.TrySetMaximized(state.NativeWindow, false);
-		window.ResizeMode = ResizeMode.NoResize;
 		RoundedWindowChrome.Refresh(window);
 		int generation = state.Generation;
 		_ = SynchronizeFullscreenAsync(window, state, generation, true);
@@ -514,7 +551,10 @@ internal static class LinuxWindowMode
 					if (fullscreen)
 					{
 						if (LinuxWindowInterop.IsFullscreen(nativeWindow))
+						{
+							LockFullscreenSize(window, state);
 							return true;
+						}
 						LinuxWindowInterop.TrySetFullscreen(nativeWindow, true);
 						return false;
 					}
@@ -572,7 +612,14 @@ internal static class LinuxWindowMode
 			window.Width = bounds.Width / scale;
 			window.Height = bounds.Height / scale;
 		}
+		LockFullscreenSize(window, state);
 		RoundedWindowChrome.Refresh(window);
+	}
+
+	private static void LockFullscreenSize(Window window, WindowModeState state)
+	{
+		if (state.Fullscreen && window.ResizeMode != ResizeMode.NoResize)
+			window.ResizeMode = ResizeMode.NoResize;
 	}
 
 	private static void RestorePlacement(Window window, WindowModeState state, nint nativeWindow)

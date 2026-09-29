@@ -304,6 +304,20 @@ namespace Voidstrap.UI.Elements.Overlay
             }
         }
 
+        internal bool TryApplyLiveBrightness()
+        {
+            if (_disposed || !IsLoaded)
+                return false;
+
+            double wanted = Math.Clamp(App.Settings.Prop.Brightness, 0, 100);
+            if (!_fullSurface)
+                return Math.Abs(wanted - DefaultBrightness) <= 0.01;
+
+            _lastAppliedBrightness = wanted;
+            Brightness = wanted;
+            return true;
+        }
+
         private void ApplyBrightness()
         {
             if (_brightness == DefaultBrightness)

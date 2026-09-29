@@ -310,7 +310,7 @@ public sealed partial class LinuxRuntimeConfiguration
 			return await SynchronizeAssetsAsync(
 				_paths.SoberAssetOverlayDirectory,
 				_paths.SoberAssetManifestFile,
-				static relative => string.Equals(relative, ClientSettingsRelativePath, StringComparison.OrdinalIgnoreCase),
+				relative => string.Equals(relative, ClientSettingsRelativePath, StringComparison.OrdinalIgnoreCase) || options.IgnoreModFile?.Invoke(relative) == true,
 				cancellationToken,
 				assetIndex: assetIndex,
 				includeSourceDirectory: options.ApplyModifications,
@@ -368,7 +368,7 @@ public sealed partial class LinuxRuntimeConfiguration
 			return await SynchronizeAssetsAsync(
 				targetDirectory,
 				manifestFile,
-				static relative => string.Equals(relative, ClientSettingsRelativePath, StringComparison.OrdinalIgnoreCase),
+				relative => string.Equals(relative, ClientSettingsRelativePath, StringComparison.OrdinalIgnoreCase) || options.IgnoreModFile?.Invoke(relative) == true,
 				cancellationToken,
 				versionsDirectory,
 				includeSourceDirectory: options.ApplyModifications,
@@ -1401,34 +1401,62 @@ public sealed partial class LinuxRuntimeConfiguration
 
 	internal static OperationResult<List<SourceAsset>> MapToPackageAssets(List<SourceAsset> sourceAssets, SoberApkAssetIndex assetIndex, List<string>? skipped, List<string>? added)
 	{
-		List<SourceAsset> mapped = [];
-		Dictionary<string, string> claimed = new(StringComparer.Ordinal);
+		Dictionary<string, (SourceAsset Asset, string Origin, bool Exact, bool Additive)> claimed = new(StringComparer.OrdinalIgnoreCase);
+		List<SourceAsset> displaced = [];
 		foreach (SourceAsset asset in sourceAssets)
 		{
+			string target;
+			bool additive = false;
 			OperationResult<string> resolved = assetIndex.Resolve(asset.RelativePath);
 			if (!resolved.Succeeded || resolved.Value is null)
 			{
-				if (string.Equals(resolved.Failure?.Code, "SoberAssetNotInPackage", StringComparison.Ordinal))
+				if (!string.Equals(resolved.Failure?.Code, "SoberAssetNotInPackage", StringComparison.Ordinal))
+					return OperationResult<List<SourceAsset>>.Fail(resolved.Failure!.Code, resolved.Failure.Message, resolved.Failure.State);
+				if (!IsAdditiveAsset(asset.RelativePath))
 				{
-					if (IsAdditiveAsset(asset.RelativePath))
-					{
-						claimed[asset.RelativePath] = asset.RelativePath;
-						mapped.Add(new SourceAsset(asset.RelativePath, asset.SourcePath));
-						added?.Add(asset.RelativePath);
-						continue;
-					}
-
 					skipped?.Add(asset.RelativePath);
 					continue;
 				}
-				return OperationResult<List<SourceAsset>>.Fail(resolved.Failure!.Code, resolved.Failure.Message, resolved.Failure.State);
+
+				target = assetIndex.CanonicalizeAdditivePath(asset.RelativePath);
+				additive = true;
+			}
+			else
+			{
+				target = resolved.Value;
 			}
 
-			if (claimed.TryGetValue(resolved.Value, out string? existing) && !string.Equals(existing, asset.RelativePath, StringComparison.Ordinal))
-				return OperationResult<List<SourceAsset>>.Fail("SoberAssetCaseConflict", "Two modifications target the same Sober asset with different capitalization");
+			bool exact = string.Equals(target, asset.RelativePath, StringComparison.OrdinalIgnoreCase);
+			if (claimed.TryGetValue(target, out (SourceAsset Asset, string Origin, bool Exact, bool Additive) existing))
+			{
+				if (existing.Exact || !exact)
+				{
+					if (!exact && !additive)
+						displaced.Add(asset);
+					continue;
+				}
+				if (!existing.Additive)
+					displaced.Add(new SourceAsset(existing.Origin, existing.Asset.SourcePath));
+			}
 
-			claimed[resolved.Value] = asset.RelativePath;
-			mapped.Add(new SourceAsset(resolved.Value, asset.SourcePath));
+			claimed[target] = (new SourceAsset(target, asset.SourcePath), asset.RelativePath, exact, additive);
+		}
+
+		foreach (SourceAsset asset in displaced)
+		{
+			if (!IsAdditiveAsset(asset.RelativePath))
+				continue;
+			string target = assetIndex.CanonicalizeAdditivePath(asset.RelativePath);
+			if (!claimed.ContainsKey(target))
+				claimed[target] = (new SourceAsset(target, asset.SourcePath), asset.RelativePath, false, true);
+		}
+
+		List<SourceAsset> mapped = [];
+		foreach ((SourceAsset asset, string _, bool _, bool additive) in claimed.Values)
+		{
+			mapped.Add(asset);
+			if (additive)
+				added?.Add(asset.RelativePath);
 		}
 
 		mapped.Sort(static (left, right) => StringComparer.Ordinal.Compare(left.RelativePath, right.RelativePath));
@@ -1470,8 +1498,24 @@ public sealed partial class LinuxRuntimeConfiguration
 			}
 		}
 
-		assets.Sort(static (left, right) => StringComparer.Ordinal.Compare(left.RelativePath, right.RelativePath));
-		return OperationResult<List<SourceAsset>>.Success(assets);
+		return OperationResult<List<SourceAsset>>.Success(CollapseCaseDuplicates(assets));
+	}
+
+	private static List<SourceAsset> CollapseCaseDuplicates(List<SourceAsset> assets)
+	{
+		Dictionary<string, SourceAsset> newest = new(StringComparer.OrdinalIgnoreCase);
+		foreach (SourceAsset asset in assets)
+		{
+			if (newest.TryGetValue(asset.RelativePath, out SourceAsset? existing)
+				&& File.GetLastWriteTimeUtc(existing.SourcePath) >= File.GetLastWriteTimeUtc(asset.SourcePath))
+				continue;
+			newest.Remove(asset.RelativePath);
+			newest[asset.RelativePath] = asset;
+		}
+
+		List<SourceAsset> result = [.. newest.Values];
+		result.Sort(static (left, right) => StringComparer.Ordinal.Compare(left.RelativePath, right.RelativePath));
+		return result;
 	}
 
 	private static OperationResult<List<SourceAsset>> MergeAdditionalSources(
@@ -1482,7 +1526,7 @@ public sealed partial class LinuxRuntimeConfiguration
 		if (additionalSources is null || additionalSources.Count == 0)
 			return OperationResult<List<SourceAsset>>.Success(assets);
 
-		Dictionary<string, SourceAsset> merged = new(StringComparer.Ordinal);
+		Dictionary<string, SourceAsset> merged = new(StringComparer.OrdinalIgnoreCase);
 		foreach (SourceAsset asset in assets)
 			merged[asset.RelativePath] = asset;
 
@@ -1508,6 +1552,7 @@ public sealed partial class LinuxRuntimeConfiguration
 			if (!IsRegularFile(file))
 				return OperationResult<List<SourceAsset>>.Fail("LinuxAssetTypeRejected", "Managed modifications must contain regular files only");
 
+			merged.Remove(relativePath);
 			merged[relativePath] = new SourceAsset(relativePath, sourcePath);
 		}
 

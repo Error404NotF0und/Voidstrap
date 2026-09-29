@@ -226,9 +226,63 @@ public sealed partial class LinuxPaths : PlatformPathsBase
 	{
 	}
 
+	private readonly IProcessService _processes;
+
 	public LinuxPaths(IProcessService processes)
 		: base(CreateStorage(processes ?? throw new ArgumentNullException(nameof(processes))))
 	{
+		_processes = processes;
+	}
+
+	public static string DefaultDataDirectory => Path.Combine(GetXdgDirectory("XDG_DATA_HOME", ".local", "share"), "voidstrap");
+
+	public static string DataLocationFile => Path.Combine(GetXdgDirectory("XDG_CONFIG_HOME", ".config"), "voidstrap", "DataLocation");
+
+	public void RelocateData(string dataDirectory)
+	{
+		if (!TryGetAbsolutePath(dataDirectory, out string target))
+			throw new ArgumentException("The data folder must be an absolute path", nameof(dataDirectory));
+
+		target = Path.TrimEndingDirectorySeparator(target);
+		string file = DataLocationFile;
+		if (string.Equals(target, Path.TrimEndingDirectorySeparator(DefaultDataDirectory), StringComparison.Ordinal))
+		{
+			if (File.Exists(file))
+				File.Delete(file);
+		}
+		else
+		{
+			Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+			File.WriteAllText(file, target + "\n");
+		}
+
+		Storage = CreateStorage(_processes);
+	}
+
+	private static string ResolveDataDirectory()
+	{
+		string fallback = DefaultDataDirectory;
+		try
+		{
+			string file = DataLocationFile;
+			if (!File.Exists(file))
+				return fallback;
+
+			string configured = File.ReadAllText(file).Trim();
+			if (configured.IndexOfAny(['\r', '\n', '\0']) >= 0 || !TryGetAbsolutePath(configured, out string path))
+				return fallback;
+
+			path = Path.TrimEndingDirectorySeparator(path);
+			string? parent = Path.GetDirectoryName(path);
+			if (string.IsNullOrEmpty(parent) || (!Directory.Exists(path) && !Directory.Exists(parent)))
+				return fallback;
+
+			return path;
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+		{
+			return fallback;
+		}
 	}
 
 	public string ApplicationsDirectory => Path.Combine(GetXdgDirectory("XDG_DATA_HOME", ".local", "share"), "applications");
@@ -236,7 +290,7 @@ public sealed partial class LinuxPaths : PlatformPathsBase
 	private static PlatformStoragePaths CreateStorage(IProcessService processes)
 	{
 		string config = Path.Combine(GetXdgDirectory("XDG_CONFIG_HOME", ".config"), "voidstrap");
-		string data = Path.Combine(GetXdgDirectory("XDG_DATA_HOME", ".local", "share"), "voidstrap");
+		string data = ResolveDataDirectory();
 		string cache = Path.Combine(GetXdgDirectory("XDG_CACHE_HOME", ".cache"), "voidstrap");
 		string state = Path.Combine(GetXdgDirectory("XDG_STATE_HOME", ".local", "state"), "voidstrap");
 		string downloads = GetDownloadsDirectory(processes);
@@ -922,6 +976,8 @@ public sealed partial class LinuxSoberRuntimeProvider : IRobloxRuntimeProvider
 
 	public static bool ForceX11Session { get; set; }
 
+	public static bool StartedInThisProcess { get; private set; }
+
 	public static Func<CancellationToken, Task<bool>>? OnboardingAssist { get; set; }
 
 	private static System.Diagnostics.Process? StartSoberKill()
@@ -1157,6 +1213,7 @@ public sealed partial class LinuxSoberRuntimeProvider : IRobloxRuntimeProvider
 
 		try
 		{
+			StartedInThisProcess = true;
 			process = LinuxFlatpakHost.Start(assist is null
 				? ["run", SoberApplicationId]
 				: ["run", "--nosocket=wayland", "--socket=x11", SoberApplicationId]);
@@ -1261,8 +1318,6 @@ public sealed partial class LinuxSoberRuntimeProvider : IRobloxRuntimeProvider
 	public static IReadOnlyList<string> EffectLayerArguments { get; set; } = [];
 
 	public static IReadOnlyList<string> ProxyArguments { get; set; } = [];
-
-	public static bool UseCompositor { get; set; }
 
 
 
@@ -1417,28 +1472,11 @@ public sealed partial class LinuxSoberRuntimeProvider : IRobloxRuntimeProvider
 		foreach (string argument in ProxyArguments)
 			arguments.Add(argument);
 
-		bool composited = UseCompositor && LinuxGamescope.IsInstalled();
-		if (composited)
-		{
-			arguments.Add("--command=" + LinuxGamescope.LauncherPath);
-			arguments.Add("--filesystem=" + LinuxEffectLayers.ConfigDirectory + ":ro");
-		}
-
 		arguments.Add(SoberApplicationId);
 
-		if (composited)
-		{
-			LinuxDisplayInfo display = LinuxDisplayMetrics.Current;
-
-			foreach (string argument in LinuxGamescope.BuildCompositorArguments(
-				display.Bounds.Width,
-				display.Bounds.Height))
-			{
-				arguments.Add(argument);
-			}
-		}
-
-		arguments.Add(deeplink.AbsoluteUri);
+		Uri soberLink = SoberLaunchLink.Normalize(deeplink);
+		if (!SoberLaunchLink.IsHomeLaunch(soberLink))
+			arguments.Add(soberLink.AbsoluteUri);
 
 		if (!await TryCloseSoberAsync(cancellationToken).ConfigureAwait(false))
 		{
@@ -1452,6 +1490,7 @@ public sealed partial class LinuxSoberRuntimeProvider : IRobloxRuntimeProvider
 			return OperationResult<LaunchSession>.Fail("FlatpakMissing", "Flatpak is not installed", CapabilityState.RequiresExternalRuntime);
 
 		OperationResult<ProcessStartResult>? result = null;
+		StartedInThisProcess = true;
 		for (int attempt = 0; attempt < 2; attempt++)
 		{
 			result = await _processes.StartAsync(launchCommand, cancellationToken);

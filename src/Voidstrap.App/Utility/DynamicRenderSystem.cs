@@ -1025,6 +1025,11 @@ namespace Voidstrap.Utility
             }
         }
 
+        internal static Task<BitmapSource?> LoadWebImageAsync(string uri)
+        {
+            return GetOrDecodeAsync(uri, 0);
+        }
+
         private static Task<BitmapSource?> GetOrDecodeAsync(string uri, int decodeWidth)
         {
             string key = CacheKey(uri, decodeWidth);

@@ -963,13 +963,12 @@ public static class LaunchHandler
 				cancellation = linuxBootstrapper.CancellationToken;
 				cancelRequested = cancellation.Register(OnPortableLaunchCancelRequested);
 				ShowPortableLaunchDialog(linuxBootstrapper);
-				if (runtimeKind == Voidstrap.Platform.RuntimeKind.Player && App.Settings.Prop.VoidstrapMatchmakerEnabled)
-					SetPortableLaunchStatus("Finding the closest server");
 			}
 			string rewrittenTarget = await Bootstrapper.RewriteVoidstrapMatchmakerBeforeDispatchAsync(
 				launchTarget,
 				launchMode,
-				cancellation);
+				cancellation,
+				OperatingSystem.IsLinux() ? ShowPortableMatchmakerSearch : null);
 			cancellation.ThrowIfCancellationRequested();
 			if (!string.Equals(rewrittenTarget, launchTarget, StringComparison.Ordinal))
 			{
@@ -977,6 +976,8 @@ public static class LaunchHandler
 				App.LaunchSettings.RobloxLaunchArgs = rewrittenTarget;
 			}
 			assetPreloadPlaceId = LaunchInterceptor.ExtractPlaceId(launchTarget);
+			if (OperatingSystem.IsLinux() && runtimeKind == Voidstrap.Platform.RuntimeKind.Player)
+				App.Logger.WriteLine("LaunchHandler::LaunchPortableRuntime", Voidstrap.Platform.Linux.SoberLaunchLink.Describe(App.LaunchSettings.RobloxLaunchArgs.Length > 0 ? launchTarget : null));
 
 			if (OperatingSystem.IsLinux() && linuxBootstrapper is not null)
 			{
@@ -991,7 +992,9 @@ public static class LaunchHandler
 					Voidstrap.Platform.Linux.LinuxSoberRuntimeProvider.ForceX11Session = Voidstrap.Integrations.Overlays.OverlaySettings.RequiresLinuxX11Session
 						&& !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DISPLAY"));
 					App.Logger.WriteLine("LaunchHandler::LaunchPortableRuntime", Voidstrap.Platform.Linux.LinuxSoberRuntimeProvider.ForceX11Session
-						? "Window controls or effects are on, starting Sober on X11"
+						? (Voidstrap.Integrations.Overlays.OverlaySettings.LinuxCustomCursorNeedsX11
+							? "Window controls, effects or a custom cursor are on, starting Sober on X11 because Sober only draws Roblox cursor textures there"
+							: "Window controls or effects are on, starting Sober on X11")
 						: "Starting Sober in its default display mode");
 					await PrepareLinuxEffectLayersAsync();
 					cancellation.ThrowIfCancellationRequested();
@@ -1114,6 +1117,10 @@ public static class LaunchHandler
 					{
 						throw new InvalidOperationException("AssetWarp could not start its Linux proxy. Check the Voidstrap log for the exact failure.");
 					}
+					if (AssetProxyRouting.ConsumeCacheCleared())
+					{
+						Bootstrapper.ReapplyAssetCacheMods();
+					}
 				}
 			}
 
@@ -1225,46 +1232,10 @@ public static class LaunchHandler
 		}
 	}
 
-	private static async Task PrepareLinuxCompositorAsync()
-	{
-		bool wanted = Voidstrap.Utility.LinuxEffectMapper.HasLiveColorEffect();
-		if (wanted && Voidstrap.Platform.Linux.LinuxSteamOS.Current.IsGamescopeSession)
-		{
-			App.Logger.WriteLine("LaunchHandler::PrepareLinuxCompositorAsync", "Running inside the Steam gamescope session, colour effects use the Vulkan shader instead of a second compositor");
-			wanted = false;
-		}
-		Voidstrap.Platform.Linux.LinuxSoberRuntimeProvider.UseCompositor = wanted;
-
-		if (!wanted)
-			return;
-
-		if (!Voidstrap.Platform.Linux.LinuxGamescope.IsInstalled())
-		{
-			Voidstrap.Platform.OperationResult installed = await Voidstrap.Platform.Linux.LinuxEffectLayers.InstallAsync(
-				new Voidstrap.Core.SystemProcessService(),
-				Voidstrap.Platform.Linux.LinuxGamescope.LayerId);
-
-			if (!installed.Succeeded)
-			{
-				App.Logger.WriteLine(
-					"LaunchHandler::PrepareLinuxCompositorAsync",
-					"The compositor could not be installed, colour effects will not update live: "
-						+ (installed.Failure?.Message ?? "unknown reason"));
-				Voidstrap.Platform.Linux.LinuxSoberRuntimeProvider.UseCompositor = false;
-				return;
-			}
-		}
-
-		await Voidstrap.Integrations.LinuxLiveColor.WriteAsync();
-		Voidstrap.Integrations.LinuxLiveColor.BeginTracking();
-	}
-
 	private static async Task PrepareLinuxEffectLayersAsync()
 	{
 		try
 		{
-			await PrepareLinuxCompositorAsync();
-
 			Voidstrap.Platform.Linux.LinuxEffectOptions options = Voidstrap.Utility.LinuxEffectMapper.CreateOptions();
 			if (!options.Enabled)
 			{
@@ -1356,6 +1327,11 @@ public static class LaunchHandler
 		return string.IsNullOrEmpty(message) || !message.Contains("{product}", StringComparison.Ordinal)
 			? message
 			: message.Replace("{product}", "Roblox", StringComparison.Ordinal);
+	}
+
+	private static void ShowPortableMatchmakerSearch()
+	{
+		SetPortableLaunchStatus("Finding the closest server");
 	}
 
 	private static void SetPortableLaunchStatus(string message)
@@ -1464,6 +1440,11 @@ public static class LaunchHandler
 
 	public static void LaunchWatcher()
 	{
+		if (OperatingSystem.IsLinux())
+		{
+			PortableSessionActive = true;
+			KeepAliveUntilPortableSessionEnds();
+		}
 		Watcher watcher = new Watcher();
 		Task.Run((Func<Task?>)watcher.Run).ContinueWith(delegate(Task t)
 		{

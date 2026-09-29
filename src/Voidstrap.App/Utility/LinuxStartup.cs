@@ -35,7 +35,13 @@ internal static partial class LinuxStartup
 
 	private const string DefaultStage = "default";
 
+	private const string OpaqueStage = "opaque";
+
 	private const string HardwareGlStage = "gl";
+
+	private const string OpaqueWindowsFlag = "VOIDSTRAP_OPAQUE_WINDOWS";
+
+	private const string NvidiaDriverVersionPath = "/proc/driver/nvidia/version";
 
 	private const string SoftwareStage = "software";
 
@@ -55,11 +61,18 @@ internal static partial class LinuxStartup
 
 	private static int _probeStarted;
 
+	private static bool _backgroundHelper;
+
+	private static readonly string[] BackgroundHelperFlags = ["deferredcleanup", "assetwarpguard", "assetwarpcleanup", "nvapply", "telemetryblock", "orcredirect"];
+
 	private static int _confirmed;
 
 	public static string ActiveStage => _activeStage;
 
 	public static bool SafeMode => _safeMode;
+
+	public static bool OpaqueWindows => _activeStage is OpaqueStage or SoftwareStage
+		|| Environment.GetEnvironmentVariable(OpaqueWindowsFlag) == "1";
 
 	[ModuleInitializer]
 	internal static void Initialize()
@@ -73,6 +86,11 @@ internal static partial class LinuxStartup
 		}
 		if (!OperatingSystem.IsLinux())
 		{
+			return;
+		}
+		if (IsBackgroundHelper(CurrentArguments()))
+		{
+			_backgroundHelper = true;
 			return;
 		}
 		if (IsConfiguredForThisProcess())
@@ -130,6 +148,18 @@ internal static partial class LinuxStartup
 
 	internal static readonly string[] BackendNames = ["Auto", "Vulkan", "OpenGL", "Software"];
 
+	private static bool IsBackgroundHelper(string[] arguments)
+	{
+		foreach (string argument in arguments)
+		{
+			if (argument.Length > 1 && argument[0] == '-' && Array.IndexOf(BackgroundHelperFlags, argument[1..].ToLowerInvariant()) >= 0)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private static bool IsConfiguredForThisProcess()
 	{
 		string? value = Environment.GetEnvironmentVariable(ConfiguredFlag);
@@ -171,11 +201,144 @@ internal static partial class LinuxStartup
 	{
 		ReadRendererMarker(out string recorded, out bool markerConfirmed, out _);
 		string? requested = Environment.GetEnvironmentVariable(GpuRetryFlag);
+		if (string.IsNullOrEmpty(requested))
+			requested = StageForWgpuBackend(Environment.GetEnvironmentVariable("WGPU_BACKEND"));
 		string stage = !string.IsNullOrEmpty(requested)
 			? NormaliseStage(requested)
 			: Environment.GetEnvironmentVariable(ForceGpuFlag) == "1" || recorded.Length == 0 ? DefaultStage : recorded;
+		if (string.IsNullOrEmpty(requested) && !CanRunStage(stage))
+			stage = DefaultStage;
+		if (string.IsNullOrEmpty(requested) && stage is SoftwareStage or HardwareGlStage && recorded == stage && File.Exists(ProbeFallbackPath) && ProbeVulkan() == VulkanSupport.Hardware)
+		{
+			DeleteProbeFallbackNote();
+			WriteError("Vulkan now works on your graphics card, so Voidstrap switches back to hardware rendering.");
+			stage = DefaultStage;
+		}
+		else if (string.IsNullOrEmpty(requested) && !(markerConfirmed && recorded == stage) && stage is DefaultStage or OpaqueStage)
+			stage = AdjustForVulkan(stage);
 		confirmed = markerConfirmed && recorded == stage;
 		return stage;
+	}
+
+	private enum VulkanSupport
+	{
+		Hardware,
+		SoftwareOnly,
+		None
+	}
+
+	private static string AdjustForVulkan(string stage)
+	{
+		VulkanSupport support = ProbeVulkan();
+		if (support == VulkanSupport.Hardware)
+			return stage;
+		if (support == VulkanSupport.SoftwareOnly && SoftwareRendererAvailable())
+		{
+			WriteError("No graphics card is available through Vulkan, so Voidstrap starts with software rendering. Install or update your graphics drivers for full speed.");
+			WriteProbeFallbackNote();
+			return SoftwareStage;
+		}
+		if (support == VulkanSupport.None && CanUseHardwareGl())
+		{
+			WriteError("Vulkan is not working on this system, so Voidstrap starts with OpenGL on your graphics card. Install or update your Vulkan drivers for the best results.");
+			WriteProbeFallbackNote();
+			return HardwareGlStage;
+		}
+		if (support == VulkanSupport.None && LavapipeDrivers().Length > 0)
+		{
+			WriteError("Vulkan is not working with your graphics drivers, so Voidstrap starts with software rendering. Install or update your graphics drivers for full speed.");
+			WriteProbeFallbackNote();
+			return SoftwareStage;
+		}
+		return stage;
+	}
+
+	private static string ProbeFallbackPath => Path.Combine(Path.GetDirectoryName(RendererMarkerPath) ?? string.Empty, "renderer-probe-fallback");
+
+	private static void WriteProbeFallbackNote()
+	{
+		try
+		{
+			Directory.CreateDirectory(Path.GetDirectoryName(ProbeFallbackPath)!);
+			File.WriteAllText(ProbeFallbackPath, "vulkan");
+		}
+		catch (Exception)
+		{
+		}
+	}
+
+	private static void DeleteProbeFallbackNote()
+	{
+		try
+		{
+			File.Delete(ProbeFallbackPath);
+		}
+		catch (Exception)
+		{
+		}
+	}
+
+	private static unsafe VulkanSupport ProbeVulkan()
+	{
+		nint instance = 0;
+		try
+		{
+			byte* createInfo = stackalloc byte[64];
+			new Span<byte>(createInfo, 64).Clear();
+			*(int*)createInfo = 1;
+			if (VkCreateInstance(createInfo, 0, &instance) != 0 || instance == 0)
+				return VulkanSupport.None;
+
+			uint count = 0;
+			if (VkEnumeratePhysicalDevices(instance, &count, null) != 0 || count == 0)
+				return VulkanSupport.None;
+
+			uint capacity = Math.Min(count, 16u);
+			nint* devices = stackalloc nint[(int)capacity];
+			int listed = VkEnumeratePhysicalDevices(instance, &capacity, devices);
+			if (listed != 0 && listed != 5)
+				return VulkanSupport.None;
+
+			byte* properties = stackalloc byte[4096];
+			for (int index = 0; index < capacity; index++)
+			{
+				new Span<byte>(properties, 4096).Clear();
+				VkGetPhysicalDeviceProperties(devices[index], properties);
+				int deviceType = *(int*)(properties + 16);
+				if (deviceType is 1 or 2 or 3)
+					return VulkanSupport.Hardware;
+			}
+			return VulkanSupport.SoftwareOnly;
+		}
+		catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+		{
+			return VulkanSupport.None;
+		}
+		finally
+		{
+			if (instance != 0)
+				VkDestroyInstance(instance, 0);
+		}
+	}
+
+	private static bool CanRunStage(string stage)
+	{
+		return stage switch
+		{
+			HardwareGlStage => CanUseHardwareGl(),
+			SoftwareStage => SoftwareRendererAvailable(),
+			_ => true
+		};
+	}
+
+	private static string? StageForWgpuBackend(string? backend)
+	{
+		return backend?.Trim().ToLowerInvariant() switch
+		{
+			"vulkan" or "vk" => DefaultStage,
+			"gl" or "gles" or "opengl" => HardwareGlStage,
+			_ => null
+		};
 	}
 
 	private static bool DecideSafeMode()
@@ -199,6 +362,10 @@ internal static partial class LinuxStartup
 	{
 		for (string current = stage; ; current = NextStage(current))
 		{
+			if (current == SoftwareStage && !SoftwareRendererAvailable())
+			{
+				ExitWithoutSoftwareRenderer();
+			}
 			int exitCode;
 			try
 			{
@@ -222,14 +389,40 @@ internal static partial class LinuxStartup
 			{
 				if (rendererFailed)
 				{
-					WriteError("Voidstrap could not start a GPU or software renderer on this system. Install your graphics drivers, or the Mesa Vulkan drivers package for software rendering, and try again.");
+					WriteRendererMarker(DefaultStage, false, 0);
+					WriteError("Voidstrap could not start a GPU or software renderer on this system. Install your graphics drivers, or the Mesa Vulkan drivers package for software rendering, and try again. The next launch tries every renderer again.");
 				}
 				Environment.Exit(exitCode);
 			}
-			WriteError(NextStage(current) == HardwareGlStage
-				? "Voidstrap could not start the Vulkan renderer, retrying with OpenGL on your graphics card."
-				: "Voidstrap could not start an accelerated renderer, retrying with software rendering. Expect reduced performance until your graphics drivers are updated.");
+			string next = NextStage(current);
+			if (next == SoftwareStage && !SoftwareRendererAvailable())
+			{
+				ExitWithoutSoftwareRenderer();
+			}
+			WriteError(RetryMessage(next));
 		}
+	}
+
+	private static bool SoftwareRendererAvailable()
+	{
+		return LavapipeDrivers().Length > 0 || HasOpenGlBackend();
+	}
+
+	private static void ExitWithoutSoftwareRenderer()
+	{
+		WriteRendererMarker(DefaultStage, false, 0);
+		WriteError("Voidstrap could not start the renderer on your graphics card, and no software renderer is installed. Install the Mesa Vulkan drivers package (lavapipe) or update your graphics drivers, then start Voidstrap again.");
+		Environment.Exit(RendererFailedExitCode);
+	}
+
+	private static string RetryMessage(string nextStage)
+	{
+		return nextStage switch
+		{
+			OpaqueStage => "Voidstrap could not start the Vulkan renderer with transparent windows, retrying with opaque windows.",
+			HardwareGlStage => "Voidstrap could not start the Vulkan renderer, retrying with OpenGL on your graphics card.",
+			_ => "Voidstrap could not start an accelerated renderer, retrying with software rendering. Expect reduced performance until your graphics drivers are updated."
+		};
 	}
 
 	private static ProcessStartInfo CreateStartInfo(string executable, IEnumerable<string> arguments, string stage, string configuredFor)
@@ -475,16 +668,39 @@ internal static partial class LinuxStartup
 	{
 		return stage switch
 		{
-			DefaultStage => HardwareGlStage,
+			DefaultStage => OpaqueStage,
+			OpaqueStage => CanUseHardwareGl() ? HardwareGlStage : SoftwareStage,
 			HardwareGlStage => SoftwareStage,
 			_ => SoftwareStage
 		};
+	}
+
+	private static bool CanUseHardwareGl()
+	{
+		return HasOpenGlBackend() && !File.Exists(NvidiaDriverVersionPath);
+	}
+
+	private static bool HasOpenGlBackend()
+	{
+		try
+		{
+			string library = Path.Combine(AppContext.BaseDirectory, "libwgpu_native.so");
+			if (!File.Exists(library))
+				return true;
+			byte[] marker = "libEGL.so"u8.ToArray();
+			return File.ReadAllBytes(library).AsSpan().IndexOf(marker) >= 0;
+		}
+		catch (Exception)
+		{
+			return true;
+		}
 	}
 
 	private static string NormaliseStage(string? stage)
 	{
 		return stage switch
 		{
+			OpaqueStage => OpaqueStage,
 			HardwareGlStage => HardwareGlStage,
 			SoftwareStage => SoftwareStage,
 			_ => DefaultStage
@@ -562,7 +778,7 @@ internal static partial class LinuxStartup
 
 	public static void BeginRendererProbe()
 	{
-		if (!OperatingSystem.IsLinux())
+		if (!OperatingSystem.IsLinux() || _backgroundHelper)
 		{
 			return;
 		}
@@ -655,7 +871,8 @@ internal static partial class LinuxStartup
 		}
 		if (_activeStage == SoftwareStage)
 		{
-			WriteError("Voidstrap could not start a GPU or software renderer on this system. Install your graphics drivers, or the Mesa Vulkan drivers package for software rendering, and try again.");
+			WriteRendererMarker(DefaultStage, false, 0);
+			WriteError("Voidstrap could not start a GPU or software renderer on this system. Install your graphics drivers, or the Mesa Vulkan drivers package for software rendering, and try again. The next launch tries every renderer again.");
 			Environment.Exit(1);
 			return;
 		}
@@ -666,9 +883,7 @@ internal static partial class LinuxStartup
 			return;
 		}
 		string nextStage = NextStage(_activeStage);
-		WriteError(nextStage == HardwareGlStage
-			? "Voidstrap could not start the Vulkan renderer, retrying with OpenGL on your graphics card."
-			: "Voidstrap could not start an accelerated renderer, retrying with software rendering. Expect reduced performance until your graphics drivers are updated.");
+		WriteError(RetryMessage(nextStage));
 		try
 		{
 			WriteRendererMarker(nextStage, false, 0);
@@ -715,6 +930,18 @@ internal static partial class LinuxStartup
 			}
 		}
 	}
+
+	[LibraryImport("libvulkan.so.1", EntryPoint = "vkCreateInstance")]
+	private static unsafe partial int VkCreateInstance(byte* createInfo, nint allocator, nint* instance);
+
+	[LibraryImport("libvulkan.so.1", EntryPoint = "vkEnumeratePhysicalDevices")]
+	private static unsafe partial int VkEnumeratePhysicalDevices(nint instance, uint* count, nint* devices);
+
+	[LibraryImport("libvulkan.so.1", EntryPoint = "vkGetPhysicalDeviceProperties")]
+	private static unsafe partial void VkGetPhysicalDeviceProperties(nint device, byte* properties);
+
+	[LibraryImport("libvulkan.so.1", EntryPoint = "vkDestroyInstance")]
+	private static partial void VkDestroyInstance(nint instance, nint allocator);
 
 	[LibraryImport("libc", EntryPoint = "execve", SetLastError = true)]
 	private static partial int Execve(nint path, nint[] argv, nint[] envp);

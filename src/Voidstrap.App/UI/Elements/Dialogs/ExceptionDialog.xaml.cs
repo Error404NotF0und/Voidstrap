@@ -41,7 +41,7 @@ public partial class ExceptionDialog : WpfUiWindow{
 		string details = exception.ToString();
 		if (!string.IsNullOrEmpty(Paths.UserProfile))
 		{
-			details = details.Replace(Paths.UserProfile, "%UserProfile%", StringComparison.OrdinalIgnoreCase);
+			details = OperatingSystem.IsWindows() ? details.Replace(Paths.UserProfile, "%UserProfile%", StringComparison.OrdinalIgnoreCase) : details.Replace(Paths.UserProfile, "~", StringComparison.Ordinal);
 		}
 		if (details.Length > MaxDetailsLength)
 		{

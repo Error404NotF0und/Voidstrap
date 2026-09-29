@@ -3056,6 +3056,17 @@ public partial class MainWindow : WpfUiWindow, INavigationWindow
 
     private string _voidRpcSmallImageText = "";
 
+    private bool _voidRpcAvatarLoading;
+
+    private void RefreshRpcAvatar()
+    {
+        _lastVoidRpcDetails = null;
+        _lastVoidRpcState = null;
+        _lastVoidRpcExtra = null;
+        _lastVoidRpcUpdate = DateTime.MinValue;
+        UpdateDiscordPresence();
+    }
+
     private async Task FetchRpcAvatarAsync()
     {
         try
@@ -3065,6 +3076,8 @@ public partial class MainWindow : WpfUiWindow, INavigationWindow
             {
                 return;
             }
+            _voidRpcAvatarLoading = true;
+            await Dispatcher.InvokeAsync(RefreshRpcAvatar);
             long robloxId = 0;
             string userName = "";
             using (var cts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token))
@@ -3134,14 +3147,29 @@ public partial class MainWindow : WpfUiWindow, INavigationWindow
             {
                 _voidRpcSmallImageText = userName;
             }
-            _lastVoidRpcDetails = null;
-            _lastVoidRpcState = null;
-            _lastVoidRpcExtra = null;
-            await Dispatcher.InvokeAsync(UpdateDiscordPresence);
+            _voidRpcAvatarLoading = false;
+            await Dispatcher.InvokeAsync(RefreshRpcAvatar);
         }
         catch (Exception ex)
         {
             App.Logger.WriteLine("DiscordRPC", "Avatar fetch failed: " + ex.GetType().Name);
+        }
+        finally
+        {
+            if (_voidRpcAvatarLoading)
+            {
+                _voidRpcAvatarLoading = false;
+                if (!_lifetimeCts.IsCancellationRequested)
+                {
+                    try
+                    {
+                        await Dispatcher.InvokeAsync(RefreshRpcAvatar);
+                    }
+                    catch
+                    {
+                    }
+                }
+            }
         }
     }
 
@@ -3477,7 +3505,7 @@ public partial class MainWindow : WpfUiWindow, INavigationWindow
                 {
                     LargeImageKey = VoidstrapLogo,
                     LargeImageText = versionText,
-                    SmallImageKey = DiscordPresenceGuard.Key(_voidRpcSmallImageUrl),
+                    SmallImageKey = _voidRpcSmallImageUrl.Length == 0 && _voidRpcAvatarLoading ? App.RpcLoadingImageUrl : DiscordPresenceGuard.Key(_voidRpcSmallImageUrl),
                     SmallImageText = string.IsNullOrEmpty(_voidRpcSmallImageUrl) ? string.Empty : DiscordPresenceGuard.Text(_voidRpcSmallImageText.Length > 0 ? _voidRpcSmallImageText : "Roblox")
                 };
             DiscordRPC.Button[] buttons = buttonUrl.Length > 0
@@ -4694,7 +4722,8 @@ public partial class MainWindow : WpfUiWindow, INavigationWindow
         {
             return;
         }
-        if (_state.WidthUpdateV2 < work.Width - LinuxScreenMargin && _state.HeightUpdateV2 < work.Height - LinuxScreenMargin)
+        double scale = Voidstrap.UI.LinuxInterfaceScale.Factor;
+        if (_state.WidthUpdateV2 * scale < work.Width - LinuxScreenMargin && _state.HeightUpdateV2 * scale < work.Height - LinuxScreenMargin)
         {
             return;
         }
@@ -5242,11 +5271,12 @@ public partial class MainWindow : WpfUiWindow, INavigationWindow
 
     private void SaveWindowState()
     {
+        double scale = Voidstrap.UI.LinuxInterfaceScale.For(this);
         if (Voidstrap.Utility.Platform.IsLinux && Voidstrap.UI.LinuxWindowMode.TryGetRestorePlacement(this, out bool fullscreenMaximized, out Rect fullscreenBounds))
         {
             _state.MaximizedUpdateV2 = fullscreenMaximized;
-            _state.WidthUpdateV2 = fullscreenBounds.Width;
-            _state.HeightUpdateV2 = fullscreenBounds.Height;
+            _state.WidthUpdateV2 = fullscreenBounds.Width / scale;
+            _state.HeightUpdateV2 = fullscreenBounds.Height / scale;
             _state.TopUpdateV2 = fullscreenBounds.Top;
             _state.LeftUpdateV2 = fullscreenBounds.Left;
             SaveSanitizedWindowState();
@@ -5262,8 +5292,8 @@ public partial class MainWindow : WpfUiWindow, INavigationWindow
         _state.MaximizedUpdateV2 = maximized;
         if (maximized && !base.RestoreBounds.IsEmpty)
         {
-            _state.WidthUpdateV2 = base.RestoreBounds.Width;
-            _state.HeightUpdateV2 = base.RestoreBounds.Height;
+            _state.WidthUpdateV2 = base.RestoreBounds.Width / scale;
+            _state.HeightUpdateV2 = base.RestoreBounds.Height / scale;
             _state.TopUpdateV2 = base.RestoreBounds.Top;
             _state.LeftUpdateV2 = base.RestoreBounds.Left;
         }
@@ -5276,13 +5306,13 @@ public partial class MainWindow : WpfUiWindow, INavigationWindow
             }
             else if (Voidstrap.UI.LinuxWindowSize.TryGet(Title, out int nativeWidth, out int nativeHeight) && nativeWidth > 0 && nativeHeight > 0)
             {
-                _state.WidthUpdateV2 = nativeWidth;
-                _state.HeightUpdateV2 = nativeHeight;
+                _state.WidthUpdateV2 = nativeWidth / scale;
+                _state.HeightUpdateV2 = nativeHeight / scale;
             }
             else
             {
-                _state.WidthUpdateV2 = base.ActualWidth;
-                _state.HeightUpdateV2 = base.ActualHeight;
+                _state.WidthUpdateV2 = base.ActualWidth / scale;
+                _state.HeightUpdateV2 = base.ActualHeight / scale;
             }
             _state.TopUpdateV2 = base.Top;
             _state.LeftUpdateV2 = base.Left;

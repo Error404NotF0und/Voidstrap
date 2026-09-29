@@ -83,20 +83,21 @@ internal sealed class WindowEdgeResizer
 		{
 			return ResizeEdge.None;
 		}
+		double thickness = EdgeThickness * LinuxInterfaceScale.For(_window);
 		ResizeEdge edge = ResizeEdge.None;
-		if (position.X <= EdgeThickness)
+		if (position.X <= thickness)
 		{
 			edge |= ResizeEdge.Left;
 		}
-		else if (position.X >= width - EdgeThickness)
+		else if (position.X >= width - thickness)
 		{
 			edge |= ResizeEdge.Right;
 		}
-		if (position.Y <= EdgeThickness)
+		if (position.Y <= thickness)
 		{
 			edge |= ResizeEdge.Top;
 		}
-		else if (position.Y >= height - EdgeThickness)
+		else if (position.Y >= height - thickness)
 		{
 			edge |= ResizeEdge.Bottom;
 		}
@@ -140,9 +141,17 @@ internal sealed class WindowEdgeResizer
 		return device;
 	}
 
+	private bool CanResize()
+	{
+		return _window.WindowState == System.Windows.WindowState.Normal
+			&& _window.ResizeMode is ResizeMode.CanResize or ResizeMode.CanResizeWithGrip
+			&& !LinuxWindowMode.IsFullscreen(_window)
+			&& !LinuxWindowMode.IsMaximized(_window);
+	}
+
 	private void OnPreviewMouseDown(object sender, MouseButtonEventArgs e)
 	{
-		if (_window.WindowState != System.Windows.WindowState.Normal || LinuxWindowMode.IsFullscreen(_window) || LinuxWindowMode.IsMaximized(_window))
+		if (!CanResize())
 		{
 			return;
 		}
@@ -181,7 +190,7 @@ internal sealed class WindowEdgeResizer
 	{
 		if (!_resizing)
 		{
-			if (_window.WindowState == System.Windows.WindowState.Normal && !LinuxWindowMode.IsFullscreen(_window) && !LinuxWindowMode.IsMaximized(_window))
+			if (CanResize())
 			{
 				Cursor? cursor = CursorFor(HitTest(e.GetPosition(_window)));
 				if (cursor != null)

@@ -376,6 +376,29 @@ internal static partial class ClassicTopBarMod
 		"ExtraContent", "LuaPackages", "Packages", "_Index", "FoundationImages", "FoundationImages", "SpriteSheets"
 	};
 
+	public static async Task<string?> FindRobloxInstallAsync(CancellationToken token)
+	{
+		if (!Voidstrap.Utility.Platform.IsLinux)
+		{
+			return FindRobloxInstall();
+		}
+
+		try
+		{
+			(string ClientDirectory, string VersionGuid)? sober = await Bootstrapper.PrepareSoberClientTreeAsync(token).ConfigureAwait(false);
+			return sober?.ClientDirectory;
+		}
+		catch (OperationCanceledException) when (token.IsCancellationRequested)
+		{
+			throw;
+		}
+		catch (Exception ex)
+		{
+			App.Logger?.WriteLine(LogIdent, "The Sober Roblox files could not be unpacked: " + ex.Message);
+			return null;
+		}
+	}
+
 	public static string? FindRobloxInstall()
 	{
 		try
@@ -429,7 +452,7 @@ internal static partial class ClassicTopBarMod
 		DiscardDirectory(Path.Combine(modRoot, "ExtraContent"));
 		DiscardDirectory(Path.Combine(modRoot, "content"));
 
-		string? install = FindRobloxInstall();
+		string? install = await FindRobloxInstallAsync(token).ConfigureAwait(false);
 		int fonts = 0;
 		int images = 0;
 		if (install == null)

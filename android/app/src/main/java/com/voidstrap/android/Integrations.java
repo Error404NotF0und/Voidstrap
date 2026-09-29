@@ -163,7 +163,11 @@ public final class Integrations {
     }
 
     public static Presence idle(Store s, long start, JSONObject account) {
-        return presence("presence.idle", Core.args("icon", s.setting(IDLE_ICON, "blue"), "start", start, "settings", Core.args("account", on(s, ACCOUNT)), "account", account));
+        return idle(s, start, account, false);
+    }
+
+    public static Presence idle(Store s, long start, JSONObject account, boolean loading) {
+        return presence("presence.idle", Core.args("icon", s.setting(IDLE_ICON, "blue"), "start", start, "settings", Core.args("account", on(s, ACCOUNT), "loading", loading), "account", account));
     }
 
     public static Presence applyRpc(Presence current, Presence original, String json) {

@@ -10,7 +10,10 @@ public static class ClipboardService
 		string value = text ?? string.Empty;
 
 		if (Platform.IsLinux && Voidstrap.Platform.Linux.LinuxClipboard.SetText(value))
+		{
+			Voidstrap.UI.LinuxClipboardBridge.Invalidate();
 			return true;
+		}
 
 		try
 		{

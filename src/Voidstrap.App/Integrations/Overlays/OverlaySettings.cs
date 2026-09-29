@@ -37,6 +37,10 @@ namespace Voidstrap.Integrations.Overlays
 				|| App.Settings.Prop.SnapTapEnabled
 				|| App.Settings.Prop.DuckRobloxAudioOnUnfocus
 				|| LinuxRobloxWindow.IsEnabled
-				|| HomepageBackgroundEnabled);
+				|| HomepageBackgroundEnabled
+				|| LinuxCustomCursorNeedsX11);
+
+		public static bool LinuxCustomCursorNeedsX11 => Voidstrap.Utility.Platform.IsLinux
+			&& App.Settings.Prop.CursorType is not Voidstrap.Enums.CursorType.Default and not Voidstrap.Enums.CursorType.VoidstrapDefault;
     }
 }

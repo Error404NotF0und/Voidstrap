@@ -1384,6 +1384,13 @@ public static class ModGenerator
 
 	private static (byte[] Pixels, int Width, int Height) Load(string path)
 	{
+		if (!Voidstrap.Utility.Platform.IsWindows)
+		{
+			using SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.Bgra32> image = SixLabors.ImageSharp.Image.Load<SixLabors.ImageSharp.PixelFormats.Bgra32>(path);
+			byte[] decoded = new byte[image.Width * image.Height * 4];
+			image.CopyPixelDataTo(decoded);
+			return (decoded, image.Width, image.Height);
+		}
 		using FileStream stream = File.OpenRead(path);
 		BitmapDecoder decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat | BitmapCreateOptions.IgnoreColorProfile, BitmapCacheOption.OnLoad);
 		BitmapSource frame = decoder.Frames[0];
@@ -1400,9 +1407,19 @@ public static class ModGenerator
 
 	private static void Save(string path, byte[] pixels, int width, int height)
 	{
+		string temporary = path + ".tmp";
+		if (!Voidstrap.Utility.Platform.IsWindows)
+		{
+			using SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.Bgra32> image = SixLabors.ImageSharp.Image.LoadPixelData<SixLabors.ImageSharp.PixelFormats.Bgra32>(pixels, width, height);
+			using (FileStream stream = File.Create(temporary))
+			{
+				image.Save(stream, new SixLabors.ImageSharp.Formats.Png.PngEncoder());
+			}
+			File.Move(temporary, path, overwrite: true);
+			return;
+		}
 		PngBitmapEncoder encoder = new PngBitmapEncoder();
 		encoder.Frames.Add(BitmapFrame.Create(Create(pixels, width, height)));
-		string temporary = path + ".tmp";
 		using (FileStream stream = File.Create(temporary))
 		{
 			encoder.Save(stream);

@@ -391,6 +391,10 @@ public class ServerInformationViewModel : NotifyPropertyChangedViewModel, IDispo
 			}
 			else
 			{
+				if (!ActivityWatcher.PlayerLoggingEnabled)
+				{
+					return;
+				}
 				num = _activityWatcher.GetPlayerCountFromLogs();
 				if (_activityWatcher.InGame && num < 1)
 				{
@@ -401,7 +405,7 @@ public class ServerInformationViewModel : NotifyPropertyChangedViewModel, IDispo
 					num = _maxPlayers;
 				}
 			}
-			string text = ((_maxPlayers > 0) ? $"{num}/{_maxPlayers}" : ((num > 0) ? num.ToString() : Strings.Common_NotAvailable));
+			string text = ((_maxPlayers > 0 && num > 0) ? $"{num}/{_maxPlayers}" : ((num > 0) ? num.ToString() : Strings.Common_NotAvailable));
 			PlayerCount = ((_gameTotal > 0) ? $"{text}  •  {_gameTotal:N0} in game" : text);
 		}
 		catch

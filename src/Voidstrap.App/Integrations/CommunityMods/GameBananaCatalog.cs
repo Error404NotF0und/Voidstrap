@@ -305,6 +305,13 @@ public static partial class GameBananaCatalog
 		}
 	}
 
+	private static readonly string[] ServerMessagePrefixes = ["Warning:", "Fatal error:", "Notice:", "Deprecated:", "Parse error:", "<", "{"];
+
+	private static bool IsServerMessage(string line)
+	{
+		return ServerMessagePrefixes.Any(prefix => line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+	}
+
 	private static async Task<string[]?> GetArchiveListingAsync(long fileId, CancellationToken token)
 	{
 		if (fileId <= 0)
@@ -344,10 +351,14 @@ public static partial class GameBananaCatalog
 					return null;
 				}
 				string trimmed = line.Trim();
-				if (trimmed.Length > 0)
+				if (trimmed.Length > 0 && !IsServerMessage(trimmed))
 				{
 					lines.Add(trimmed);
 				}
+			}
+			if (lines.Count == 0)
+			{
+				return null;
 			}
 			string[] result = [.. lines];
 			ArchiveListings[fileId] = result;
@@ -716,6 +727,56 @@ public static partial class GameBananaCatalog
 	{
 		string raw = Path.Combine(staging, "raw");
 		Directory.CreateDirectory(raw);
+		if (Voidstrap.Utility.Platform.IsLinux)
+		{
+			await UnpackWithLibarchiveAsync(archivePath, extension, raw, token).ConfigureAwait(false);
+		}
+		else
+		{
+			await UnpackWithTarAsync(archivePath, extension, raw, token).ConfigureAwait(false);
+		}
+
+		long extracted = 0;
+		int files = 0;
+		foreach (string entry in Directory.EnumerateFiles(raw, "*", SearchOption.AllDirectories))
+		{
+			token.ThrowIfCancellationRequested();
+			files++;
+			extracted += new FileInfo(entry).Length;
+			if (files > CommunityModGuard.MaxArchiveEntries || extracted > CommunityModGuard.MaxExtractedBytes)
+			{
+				throw new InvalidOperationException("The package expands far beyond the allowed size and was discarded.");
+			}
+		}
+		if (files == 0)
+		{
+			throw new InvalidDataException("The package is empty.");
+		}
+
+		string converted = Path.Combine(staging, "converted.zip");
+		await Task.Run(() => CreateZip(raw, converted, token), token).ConfigureAwait(false);
+		return converted;
+	}
+
+	private static async Task UnpackWithLibarchiveAsync(string archivePath, string extension, string raw, CancellationToken token)
+	{
+		if (!Voidstrap.Platform.Linux.LinuxArchive.IsAvailable)
+		{
+			throw new InvalidDataException("This system cannot open " + extension.TrimStart('.') + " packages.");
+		}
+		try
+		{
+			await Task.Run(() => Voidstrap.Platform.Linux.LinuxArchive.ExtractFiles(archivePath, raw, CommunityModGuard.MaxArchiveEntries, CommunityModGuard.MaxExtractedBytes, token), token).ConfigureAwait(false);
+		}
+		catch (InvalidDataException ex)
+		{
+			App.Logger?.WriteLine(LogIdent, ex.Message);
+			throw new InvalidDataException("The " + extension.TrimStart('.') + " package could not be unpacked.");
+		}
+	}
+
+	private static async Task UnpackWithTarAsync(string archivePath, string extension, string raw, CancellationToken token)
+	{
 		string tool = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "tar.exe");
 		if (!File.Exists(tool))
 		{
@@ -749,27 +810,6 @@ public static partial class GameBananaCatalog
 		{
 			throw new InvalidDataException("The " + extension.TrimStart('.') + " package could not be unpacked.");
 		}
-
-		long extracted = 0;
-		int files = 0;
-		foreach (string entry in Directory.EnumerateFiles(raw, "*", SearchOption.AllDirectories))
-		{
-			token.ThrowIfCancellationRequested();
-			files++;
-			extracted += new FileInfo(entry).Length;
-			if (files > CommunityModGuard.MaxArchiveEntries || extracted > CommunityModGuard.MaxExtractedBytes)
-			{
-				throw new InvalidOperationException("The package expands far beyond the allowed size and was discarded.");
-			}
-		}
-		if (files == 0)
-		{
-			throw new InvalidDataException("The package is empty.");
-		}
-
-		string converted = Path.Combine(staging, "converted.zip");
-		await Task.Run(() => CreateZip(raw, converted, token), token).ConfigureAwait(false);
-		return converted;
 	}
 
 	private static void CreateZip(string folder, string zipPath, CancellationToken token)
@@ -777,7 +817,7 @@ public static partial class GameBananaCatalog
 		try
 		{
 			using ZipArchive archive = ZipFile.Open(zipPath, ZipArchiveMode.Create);
-			foreach (string file in Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories))
+			foreach (string file in EnumerateInWindowsOrder(folder))
 			{
 				token.ThrowIfCancellationRequested();
 				archive.CreateEntryFromFile(file, Path.GetRelativePath(folder, file).Replace(Path.DirectorySeparatorChar, '/'), CompressionLevel.NoCompression);
@@ -787,6 +827,35 @@ public static partial class GameBananaCatalog
 		{
 			TryDeleteFile(zipPath);
 			throw;
+		}
+	}
+
+	private static IEnumerable<string> EnumerateInWindowsOrder(string folder)
+	{
+		if (!Voidstrap.Utility.Platform.IsLinux)
+		{
+			foreach (string file in Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories))
+			{
+				yield return file;
+			}
+			yield break;
+		}
+		Queue<string> pending = new Queue<string>();
+		pending.Enqueue(folder);
+		while (pending.Count > 0)
+		{
+			string current = pending.Dequeue();
+			foreach (string file in Directory.GetFiles(current).OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
+			{
+				yield return file;
+			}
+			foreach (string directory in Directory.GetDirectories(current).OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
+			{
+				if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) == 0)
+				{
+					pending.Enqueue(directory);
+				}
+			}
 		}
 	}
 

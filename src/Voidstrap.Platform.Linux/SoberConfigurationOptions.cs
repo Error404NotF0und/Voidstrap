@@ -29,13 +29,49 @@ public sealed record SoberNativeConfigurationOptions(
 	bool? UseLibsecret = null,
 	bool? UseOpenGl = null);
 
+public static class SoberNativeSettings
+{
+	private const string ServerLocationIndicatorKey = "server_location_indicator_enabled";
+
+	private static readonly System.Text.Json.JsonDocumentOptions DocumentOptions = new()
+	{
+		AllowTrailingCommas = true,
+		CommentHandling = System.Text.Json.JsonCommentHandling.Skip
+	};
+
+	public static bool IsServerLocationIndicatorEnabled()
+	{
+		return ReadBoolean(ServerLocationIndicatorKey);
+	}
+
+	private static bool ReadBoolean(string name)
+	{
+		string home = Environment.GetEnvironmentVariable("HOME") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+		string path = Path.Combine(home, ".var", "app", "org.vinegarhq.Sober", "config", "sober", "config.json");
+		try
+		{
+			if (!File.Exists(path))
+				return false;
+			using System.Text.Json.JsonDocument document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path), DocumentOptions);
+			return document.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
+				&& document.RootElement.TryGetProperty(name, out System.Text.Json.JsonElement value)
+				&& value.ValueKind == System.Text.Json.JsonValueKind.True;
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+		{
+			return false;
+		}
+	}
+}
+
 public sealed record LinuxModSource(string RelativePath, string SourcePath);
 
 public sealed record LinuxPlayerPreparationOptions(
 	bool UseFastFlagManager = true,
 	SoberNativeConfigurationOptions? NativeConfiguration = null,
 	bool ApplyModifications = true,
-	IReadOnlyList<LinuxModSource>? AdditionalModSources = null);
+	IReadOnlyList<LinuxModSource>? AdditionalModSources = null,
+	Func<string, bool>? IgnoreModFile = null);
 
 public interface ISoberProcessProbe
 {

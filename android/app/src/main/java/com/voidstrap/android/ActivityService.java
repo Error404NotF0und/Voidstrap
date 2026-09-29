@@ -398,6 +398,7 @@ public final class ActivityService extends Service implements ActivityWatcher.Li
             setPresence(Integrations.idle(store, sessionStart, account));
             return;
         }
+        setPresence(Integrations.idle(store, sessionStart, null, true));
         store.work.execute(() -> {
             JSONObject who = Integrations.account(this, userId, false);
             store.main.post(() -> {

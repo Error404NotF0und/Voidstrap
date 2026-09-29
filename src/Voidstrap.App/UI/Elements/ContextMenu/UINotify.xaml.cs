@@ -20,9 +20,18 @@ namespace Voidstrap.UI.Elements.Overlay
         private const int EdgeMargin = 10;
         private const int RenderWarmUpFrames = 6;
         private const int RenderWarmUpTimeoutMs = 2500;
+        private const int IntroSlideMs = 420;
+        private const int IntroFadeMs = 260;
         private const int OutroMs = 320;
         private const int AnimationFrameRate = 60;
         private const int OutroTimeoutMs = 1200;
+		private const int LinuxCornerRadius = 10;
+		private const int LinuxParkedPosition = -32000;
+		private const int LinuxPresentFrames = 2;
+		private const int LinuxPresentTimeoutMs = 250;
+		private const int LinuxWarmDelayMs = 3000;
+		private const int LinuxWarmMs = 1500;
+		private static readonly DependencyProperty LinuxFadeProperty = DependencyProperty.Register("LinuxFade", typeof(double), typeof(NotificationWindow), new PropertyMetadata(1.0));
 		private readonly Queue<NotificationItem> _queue = new();
 		private readonly CancellationTokenSource _lifetimeCts = new();
 		private double _slideDistance = 360;
@@ -34,9 +43,16 @@ namespace Voidstrap.UI.Elements.Overlay
 		private bool _closed;
 		private bool _renderReady;
 		private Task? _renderReadyTask;
-		private int _renderHold;
-		private int _renderFrames;
-		private bool _reportedFrameRate;
+		private bool _linuxAlpha = true;
+		private bool _linuxAlphaResolved;
+		private bool _linuxSyncing;
+		private bool _linuxWarmed;
+		private nint _linuxHandle;
+		private int _linuxPixelWidth;
+		private int _linuxPixelHeight;
+		private int _linuxShapeOffset = int.MinValue;
+		private int _linuxPreviousOffset = int.MinValue;
+		private int _linuxOpacityStep = -1;
 
         public bool IsUsable => !_closed;
 
@@ -54,7 +70,6 @@ namespace Voidstrap.UI.Elements.Overlay
 				Width = Math.Max(1, Width - margin.Left - margin.Right);
 				Height = Math.Max(1, Height - margin.Top - margin.Bottom);
 				NotificationRoot.Margin = new Thickness(0);
-				Opacity = 0;
 				SizeChanged += Window_SizeChanged;
 			}
             AccentStripe.Fill = Voidstrap.Utility.SystemAccent.GetGlassBrush();
@@ -71,12 +86,16 @@ namespace Voidstrap.UI.Elements.Overlay
 
 		private void Window_SizeChanged(object sender, SizeChangedEventArgs e)
 		{
-			if (_linuxSurface)
-				Voidstrap.Integrations.Overlays.LinuxOverlaySurface.ApplyRoundedShape(this, 10);
+			if (!_linuxSurface)
+				return;
+			_linuxPixelWidth = 0;
+			_linuxPixelHeight = 0;
+			if (_linuxAlphaResolved && !_linuxAlpha)
+				SyncLinuxSurface(true);
 		}
 
         #region Public API
-        public const char FlagPlaceholder = '\uFFFC';
+        public const char FlagPlaceholder = '￼';
 
         public void ShowNotification(string message, BitmapSource? image = null, double durationSeconds = 5, BitmapSource? flag = null)
         {
@@ -125,54 +144,41 @@ namespace Voidstrap.UI.Elements.Overlay
 					BeginAnimation(OpacityProperty, null);
 					if (_linuxSurface)
 					{
-						RootTranslate.X = 0;
-						NotificationBorder.Opacity = 1;
-						Opacity = 0;
+						await PrepareLinuxShowAsync();
+						if (_closed || _lifetimeCts.IsCancellationRequested)
+							break;
 					}
 					else
 					{
 						NotificationBorder.Opacity = 0;
+						PositionBeforeShow();
+						if (!IsVisible)
+							Show();
+						UpdateLayout();
+						UpdatePosition();
+						RootTranslate.X = _slideDistance;
+						EnsureOpaqueBackground();
+						RootTranslate.X = _slideDistance;
+						NotificationBorder.Opacity = 0;
 					}
 
-					PositionBeforeShow();
-					if (!IsVisible)
-						Show();
-					UpdateLayout();
-					UpdatePosition();
-					RootTranslate.X = _linuxSurface ? 0 : _slideDistance;
-					EnsureOpaqueBackground();
-					if (_linuxSurface)
-					{
-						Voidstrap.Integrations.Overlays.LinuxOverlaySurface.ApplyRoundedShape(this, 10);
-						Voidstrap.Integrations.Overlays.LinuxOverlaySurface.WakePresentation(this);
-					}
-
-					await EnsureRenderLoopReadyAsync();
-					if (_closed || _lifetimeCts.IsCancellationRequested)
-						break;
-					HoldRenderLoop();
-					RootTranslate.X = _linuxSurface ? 0 : _slideDistance;
-					NotificationBorder.Opacity = _linuxSurface ? 1 : 0;
-
-                    var fadeIn = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(260))
+                    var fadeIn = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(IntroFadeMs))
                     {
                         EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
                     };
                     Timeline.SetDesiredFrameRate(fadeIn, AnimationFrameRate);
-					if (_linuxSurface)
+					var slideIn = new DoubleAnimation(_slideDistance, 0, TimeSpan.FromMilliseconds(IntroSlideMs))
 					{
-						BeginAnimation(OpacityProperty, fadeIn);
-					}
+						EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+					};
+					Timeline.SetDesiredFrameRate(slideIn, AnimationFrameRate);
+					if (_linuxSurface && !_linuxAlpha)
+						StartLinuxSync();
+					RootTranslate.BeginAnimation(TranslateTransform.XProperty, slideIn);
+					if (_linuxSurface && !_linuxAlpha)
+						BeginAnimation(LinuxFadeProperty, fadeIn);
 					else
-					{
-						var slideIn = new DoubleAnimation(_slideDistance, 0, TimeSpan.FromMilliseconds(420))
-						{
-							EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
-						};
-						Timeline.SetDesiredFrameRate(slideIn, AnimationFrameRate);
-						RootTranslate.BeginAnimation(TranslateTransform.XProperty, slideIn);
 						NotificationBorder.BeginAnimation(OpacityProperty, fadeIn);
-					}
 					var progressAnim = new DoubleAnimation
 					{
 						From = 0,
@@ -182,10 +188,20 @@ namespace Voidstrap.UI.Elements.Overlay
 					Timeline.SetDesiredFrameRate(progressAnim, AnimationFrameRate);
 					ProgressScale.BeginAnimation(ScaleTransform.ScaleXProperty, progressAnim);
 
-                    await Task.Delay(TimeSpan.FromSeconds(duration), _lifetimeCts.Token);
+					if (_linuxSyncing)
+					{
+						TimeSpan intro = TimeSpan.FromMilliseconds(IntroSlideMs + 40);
+						await Task.Delay(intro, _lifetimeCts.Token);
+						StopLinuxSync();
+						SyncLinuxSurface(true);
+						await Task.Delay(TimeSpan.FromSeconds(duration) - intro, _lifetimeCts.Token);
+					}
+					else
+					{
+						await Task.Delay(TimeSpan.FromSeconds(duration), _lifetimeCts.Token);
+					}
 
                     await PlayOutroAsync();
-                    ReportFrameRate(duration);
 
                     SetImage(null);
                 }
@@ -201,15 +217,22 @@ namespace Voidstrap.UI.Elements.Overlay
             finally
             {
                 _isProcessing = false;
-				ReleaseRenderLoop();
+				StopLinuxSync();
 				if (!_closed)
 				{
 					RootTranslate.BeginAnimation(TranslateTransform.XProperty, null);
 					NotificationBorder.BeginAnimation(OpacityProperty, null);
 					BeginAnimation(OpacityProperty, null);
-					NotificationBorder.Opacity = 0;
-					Opacity = _linuxSurface ? 0 : 1;
-					Hide();
+					if (_linuxSurface)
+					{
+						ParkLinuxSurface();
+					}
+					else
+					{
+						NotificationBorder.Opacity = 0;
+						Opacity = 1;
+						Hide();
+					}
 					SetImage(null);
 					NotificationText.Inlines.Clear();
 				}
@@ -281,17 +304,14 @@ namespace Voidstrap.UI.Elements.Overlay
 
 			ProgressScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
 			ProgressScale.ScaleX = 0;
-			if (_linuxSurface)
-			{
-				fadeOut.Completed += completed;
-				BeginAnimation(OpacityProperty, fadeOut);
-			}
+			slideOut.Completed += completed;
+			if (_linuxSurface && !_linuxAlpha)
+				StartLinuxSync();
+			RootTranslate.BeginAnimation(TranslateTransform.XProperty, slideOut);
+			if (_linuxSurface && !_linuxAlpha)
+				BeginAnimation(LinuxFadeProperty, fadeOut);
 			else
-			{
-				slideOut.Completed += completed;
-				RootTranslate.BeginAnimation(TranslateTransform.XProperty, slideOut);
 				NotificationBorder.BeginAnimation(OpacityProperty, fadeOut);
-			}
 
 			try
 			{
@@ -302,48 +322,9 @@ namespace Voidstrap.UI.Elements.Overlay
 			}
 			finally
 			{
-				fadeOut.Completed -= completed;
 				slideOut.Completed -= completed;
+				StopLinuxSync();
 			}
-		}
-
-		private void ReportFrameRate(double duration)
-		{
-			if (_reportedFrameRate || Volatile.Read(ref _renderHold) == 0)
-				return;
-
-			_reportedFrameRate = true;
-			double seconds = duration + (OutroMs / 1000.0);
-			App.Logger.WriteLine(
-				"NotificationWindow::ReportFrameRate",
-				"Rendered " + _renderFrames + " frames over " + seconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) +
-				"s, about " + (_renderFrames / Math.Max(0.1, seconds)).ToString("F0", System.Globalization.CultureInfo.InvariantCulture) + " per second");
-		}
-
-		private void HoldRenderLoop()
-		{
-			if (!Voidstrap.Utility.Platform.IsLinux)
-				return;
-
-			if (Interlocked.Exchange(ref _renderHold, 1) == 1)
-				return;
-
-			_renderFrames = 0;
-
-			CompositionTarget.Rendering += OnRenderLoopHold;
-		}
-
-		private void ReleaseRenderLoop()
-		{
-			if (Interlocked.Exchange(ref _renderHold, 0) == 0)
-				return;
-
-			CompositionTarget.Rendering -= OnRenderLoopHold;
-		}
-
-		private void OnRenderLoopHold(object? sender, EventArgs e)
-		{
-			_renderFrames++;
 		}
 
 		public void Prewarm()
@@ -364,30 +345,252 @@ namespace Voidstrap.UI.Elements.Overlay
 		{
 			try
 			{
-				NotificationBorder.Opacity = 0;
-				if (_linuxSurface)
-				{
-					Left = -32000;
-					Top = -32000;
-					Opacity = 0;
-				}
-				else
-				{
-					PositionBeforeShow();
-				}
+				if (!_linuxSurface)
+					return;
+				RootTranslate.X = _slideDistance;
+				ApplyLinuxHiddenState();
 				if (!IsVisible)
+				{
+					Left = LinuxParkedPosition;
+					Top = LinuxParkedPosition;
 					Show();
+				}
 				UpdateLayout();
-				RootTranslate.X = _linuxSurface ? 0 : _slideDistance;
-				if (_linuxSurface)
-					Voidstrap.Integrations.Overlays.LinuxOverlaySurface.ApplyRoundedShape(this, 10);
+				_slideDistance = ActualWidth > 0 ? ActualWidth : Width;
+				RootTranslate.X = _slideDistance;
+				EnsureOpaqueBackground();
 				await EnsureRenderLoopReadyAsync();
-				if (!_closed && !_isProcessing)
-					Hide();
+				ResolveLinuxAlpha();
+				ApplyLinuxHiddenState();
+				await WarmLinuxAnimationsAsync();
 			}
 			catch (Exception ex)
 			{
 				App.Logger.WriteLine("NotificationWindow::Prewarm", "The notification surface could not be prepared: " + ex.Message);
+			}
+		}
+
+		private async Task WarmLinuxAnimationsAsync()
+		{
+			if (_linuxWarmed || _closed || _isProcessing)
+				return;
+
+			_linuxWarmed = true;
+			try
+			{
+				await Task.Delay(LinuxWarmDelayMs, _lifetimeCts.Token);
+			}
+			catch (OperationCanceledException)
+			{
+				return;
+			}
+			if (_closed || _isProcessing)
+				return;
+
+			NotificationText.Text = "Voidstrap\nServer location • 0 players";
+			NotificationBorder.Opacity = 1;
+			TimeSpan length = TimeSpan.FromMilliseconds(LinuxWarmMs);
+			DoubleAnimation slide = new(_slideDistance, 0, TimeSpan.FromMilliseconds(IntroSlideMs))
+			{
+				EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+			};
+			DoubleAnimation fade = new(0, 1, TimeSpan.FromMilliseconds(IntroFadeMs))
+			{
+				EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+			};
+			DoubleAnimation progress = new(0, 1, length);
+			Timeline.SetDesiredFrameRate(slide, AnimationFrameRate);
+			Timeline.SetDesiredFrameRate(fade, AnimationFrameRate);
+			Timeline.SetDesiredFrameRate(progress, AnimationFrameRate);
+			RootTranslate.BeginAnimation(TranslateTransform.XProperty, slide);
+			NotificationBorder.BeginAnimation(OpacityProperty, fade);
+			ProgressScale.BeginAnimation(ScaleTransform.ScaleXProperty, progress);
+			try
+			{
+				await Task.Delay(length, _lifetimeCts.Token);
+			}
+			catch (OperationCanceledException)
+			{
+				return;
+			}
+			if (_closed || _isProcessing)
+				return;
+			RootTranslate.BeginAnimation(TranslateTransform.XProperty, null);
+			NotificationBorder.BeginAnimation(OpacityProperty, null);
+			ProgressScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+			ProgressScale.ScaleX = 0;
+			NotificationText.Text = string.Empty;
+			ParkLinuxSurface();
+		}
+
+		private async Task PrepareLinuxShowAsync()
+		{
+			BeginAnimation(LinuxFadeProperty, null);
+			if (IsVisible)
+			{
+				ParkLinuxSurface();
+			}
+			else
+			{
+				RootTranslate.X = _slideDistance;
+				ApplyLinuxHiddenState();
+				Left = LinuxParkedPosition;
+				Top = LinuxParkedPosition;
+				Show();
+			}
+			UpdateLayout();
+			_slideDistance = ActualWidth > 0 ? ActualWidth : Width;
+			RootTranslate.X = _slideDistance;
+			EnsureOpaqueBackground();
+			await EnsureRenderLoopReadyAsync();
+			if (_closed || _lifetimeCts.IsCancellationRequested)
+				return;
+			ResolveLinuxAlpha();
+			RootTranslate.X = 0;
+			NotificationBorder.Opacity = 1;
+			Voidstrap.Integrations.Overlays.LinuxOverlaySurface.WakePresentation(this);
+			await new RenderWarmUp(LinuxPresentFrames, LinuxPresentTimeoutMs).Completion;
+			RootTranslate.X = _slideDistance;
+			ApplyLinuxHiddenState();
+			Voidstrap.Integrations.Overlays.LinuxOverlaySurface.WakePresentation(this);
+			await new RenderWarmUp(LinuxPresentFrames, LinuxPresentTimeoutMs).Completion;
+			if (_closed || _lifetimeCts.IsCancellationRequested)
+				return;
+			UpdatePosition();
+		}
+
+		private void ApplyLinuxHiddenState()
+		{
+			if (_linuxAlpha)
+			{
+				NotificationBorder.Opacity = 0;
+				return;
+			}
+
+			NotificationBorder.Opacity = 1;
+			BeginAnimation(LinuxFadeProperty, null);
+			SetValue(LinuxFadeProperty, 0.0);
+			SyncLinuxSurface(true);
+		}
+
+		private void ParkLinuxSurface()
+		{
+			RootTranslate.X = _slideDistance;
+			ApplyLinuxHiddenState();
+			Left = LinuxParkedPosition;
+			Top = LinuxParkedPosition;
+			nint handle = ResolveLinuxHandle();
+			if (handle != 0 && LinuxWindowSize(handle, out int width, out int height))
+				Voidstrap.Platform.Linux.LinuxWindowInterop.TryMoveResize(handle, LinuxParkedPosition, LinuxParkedPosition, width, height);
+		}
+
+		private void ResolveLinuxAlpha()
+		{
+			if (_linuxAlphaResolved)
+				return;
+
+			nint handle = ResolveLinuxHandle();
+			if (handle == 0)
+				return;
+
+			_linuxAlphaResolved = true;
+			bool forcedOpaque = Environment.GetEnvironmentVariable("VOIDSTRAP_OVERLAY_ALPHA") == "0";
+			_linuxAlpha = !forcedOpaque
+				&& Voidstrap.Platform.Linux.LinuxWindowInterop.TryGetWindowDepth(handle, out int depth)
+				&& depth == 32;
+			if (_linuxAlpha)
+				Voidstrap.Platform.Linux.LinuxWindowInterop.TryClearShape(handle);
+			App.Logger.WriteLine("NotificationWindow::ResolveLinuxAlpha", _linuxAlpha
+				? "The notification surface has an alpha channel, it slides and fades exactly like Windows"
+				: "The notification surface has no alpha channel, the compositor fades it and its shape follows the slide");
+		}
+
+		private void StartLinuxSync()
+		{
+			if (_linuxSyncing)
+				return;
+
+			_linuxSyncing = true;
+			_linuxPreviousOffset = int.MinValue;
+			CompositionTarget.Rendering += OnLinuxSurfaceFrame;
+		}
+
+		private void StopLinuxSync()
+		{
+			if (!_linuxSyncing)
+				return;
+
+			_linuxSyncing = false;
+			CompositionTarget.Rendering -= OnLinuxSurfaceFrame;
+		}
+
+		private void OnLinuxSurfaceFrame(object? sender, EventArgs e)
+		{
+			SyncLinuxSurface(false);
+		}
+
+		private void SyncLinuxSurface(bool force)
+		{
+			if (!_linuxSurface || _linuxAlpha || _closed)
+				return;
+
+			nint handle = ResolveLinuxHandle();
+			if (handle == 0 || !LinuxWindowSize(handle, out int width, out int height))
+				return;
+
+			double logicalWidth = ActualWidth > 0 ? ActualWidth : Width;
+			double scale = logicalWidth > 0 ? width / logicalWidth : 1;
+			int offset = (int)Math.Round(RootTranslate.X * scale);
+			int shapeOffset = force || _linuxPreviousOffset == int.MinValue ? offset : Math.Max(offset, _linuxPreviousOffset);
+			_linuxPreviousOffset = offset;
+			if (force || shapeOffset != _linuxShapeOffset)
+			{
+				int radius = Math.Max(1, (int)Math.Round(LinuxCornerRadius * Math.Max(0.5, scale)));
+				Voidstrap.Platform.Linux.LinuxWindowInterop.TrySetOffsetRoundedShape(handle, shapeOffset, width, height, radius, width, height);
+				_linuxShapeOffset = shapeOffset;
+			}
+
+			int step = (int)Math.Round(Math.Clamp((double)GetValue(LinuxFadeProperty), 0, 1) * 100);
+			if (force || step != _linuxOpacityStep)
+			{
+				Voidstrap.Platform.Linux.LinuxWindowInterop.TrySetWindowOpacity(handle, step / 100.0);
+				_linuxOpacityStep = step;
+			}
+		}
+
+		private bool LinuxWindowSize(nint handle, out int width, out int height)
+		{
+			if (_linuxPixelWidth <= 0 || _linuxPixelHeight <= 0)
+			{
+				if (!Voidstrap.Platform.Linux.LinuxWindowInterop.TryGetWindowGeometry(handle, out _, out _, out _linuxPixelWidth, out _linuxPixelHeight))
+				{
+					_linuxPixelWidth = 0;
+					_linuxPixelHeight = 0;
+				}
+			}
+			width = _linuxPixelWidth;
+			height = _linuxPixelHeight;
+			return width > 0 && height > 0;
+		}
+
+		private nint ResolveLinuxHandle()
+		{
+			if (_linuxHandle != 0 && Voidstrap.Platform.Linux.LinuxWindowInterop.IsLiveWindow(_linuxHandle))
+				return _linuxHandle;
+
+			try
+			{
+				nint handle = new WindowInteropHelper(this).Handle;
+				if (handle == 0 || !Voidstrap.Platform.Linux.LinuxWindowInterop.IsLiveWindow(handle))
+					handle = string.IsNullOrWhiteSpace(Title) ? 0 : Voidstrap.Platform.Linux.LinuxWindowInterop.FindOwnWindowByTitle(Title);
+				_linuxHandle = handle;
+				_linuxPixelWidth = 0;
+				_linuxPixelHeight = 0;
+				return handle;
+			}
+			catch (Exception)
+			{
+				return 0;
 			}
 		}
 
@@ -549,7 +752,7 @@ namespace Voidstrap.UI.Elements.Overlay
 				if (handle == 0)
 					return false;
 
-				if (!Voidstrap.Platform.Linux.LinuxWindowInterop.TryGetWorkArea(out int areaLeft, out int areaTop, out int areaWidth, out int areaHeight)
+				if (!TryGetLinuxTargetWorkArea(out int areaLeft, out int areaTop, out int areaWidth, out int areaHeight)
 					|| areaWidth <= 0
 					|| areaHeight <= 0)
 					return false;
@@ -568,6 +771,25 @@ namespace Voidstrap.UI.Elements.Overlay
 				App.Logger.WriteLine("NotificationWindow::MoveTopRight", "The notification could not be positioned: " + ex.Message);
 				return false;
 			}
+		}
+
+		private static bool TryGetLinuxTargetWorkArea(out int left, out int top, out int width, out int height)
+		{
+			Voidstrap.Platform.Linux.LinuxWindowGeometry runtime = Voidstrap.Platform.Linux.LinuxWindowInterop.FindRuntimeWindow();
+			if (runtime.Valid
+				&& runtime.Width > 0
+				&& runtime.Height > 0
+				&& Voidstrap.Platform.Linux.LinuxWindowInterop.TryGetMonitorWorkAreaAt(runtime.Left + runtime.Width / 2, runtime.Top + runtime.Height / 2, out left, out top, out width, out height)
+				&& width > 0
+				&& height > 0)
+				return true;
+
+			if (Voidstrap.Platform.Linux.LinuxWindowInterop.TryGetPrimaryScreen(out _, out _, out _, out _, out left, out top, out width, out height)
+				&& width > 0
+				&& height > 0)
+				return true;
+
+			return Voidstrap.Platform.Linux.LinuxWindowInterop.TryGetWorkArea(out left, out top, out width, out height);
 		}
 
 		private void QueueLinuxReposition()
@@ -629,7 +851,7 @@ namespace Voidstrap.UI.Elements.Overlay
             if (!Voidstrap.Utility.Platform.IsWindows)
             {
                 Title = "Voidstrap Notification";
-                Voidstrap.Integrations.Overlays.LinuxOverlaySurface.MakeClickThrough(this, 10);
+                Voidstrap.Integrations.Overlays.LinuxOverlaySurface.MakeClickThrough(this);
                 return;
             }
 
@@ -654,7 +876,7 @@ namespace Voidstrap.UI.Elements.Overlay
         private void Window_Closed(object? sender, EventArgs e)
         {
 			_closed = true;
-			ReleaseRenderLoop();
+			StopLinuxSync();
             SourceInitialized -= Window_SourceInitialized;
             Closed -= Window_Closed;
 			SizeChanged -= Window_SizeChanged;
@@ -663,6 +885,7 @@ namespace Voidstrap.UI.Elements.Overlay
             RootTranslate.BeginAnimation(TranslateTransform.XProperty, null);
             NotificationBorder.BeginAnimation(OpacityProperty, null);
             ProgressScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+			BeginAnimation(LinuxFadeProperty, null);
             SetImage(null);
             NotificationText.Inlines.Clear();
             _lifetimeCts.Dispose();

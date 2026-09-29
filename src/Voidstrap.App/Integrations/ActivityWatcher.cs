@@ -292,8 +292,8 @@ public partial class ActivityWatcher : IDisposable
 		catch
 		{
 		}
-		int num = (serverFound ? apiCurrent : logCount);
-		if (InGame && num < 1)
+		int num = serverFound ? apiCurrent : PlayerLoggingEnabled ? logCount : 0;
+		if ((serverFound || PlayerLoggingEnabled) && InGame && num < 1)
 		{
 			num = 1;
 		}
@@ -338,17 +338,21 @@ public partial class ActivityWatcher : IDisposable
 			return null;
 		}
 		using CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromSeconds(8L));
-		string? text = null;
-		for (int pages = 0; pages < 6; pages++)
+		string[] orders = ["Desc", "Asc"];
+		string?[] cursors = new string?[orders.Length];
+		bool[] exhausted = new bool[orders.Length];
+		for (int request = 0; request < 6; request++)
 		{
-			if (cts.IsCancellationRequested)
+			if (cts.IsCancellationRequested || (exhausted[0] && exhausted[1]))
 			{
 				break;
 			}
-			string text2 = $"https://games.roblox.com/v1/games/{placeId}/servers/Public?limit=100&sortOrder=Asc";
-			if (!string.IsNullOrEmpty(text))
+			int order = exhausted[request % 2] ? 1 - request % 2 : request % 2;
+			string text2 = $"https://games.roblox.com/v1/games/{placeId}/servers/Public?limit=100&sortOrder={orders[order]}";
+			string? cursor = cursors[order];
+			if (!string.IsNullOrEmpty(cursor))
 			{
-				text2 = text2 + "&cursor=" + Uri.EscapeDataString(text);
+				text2 = text2 + "&cursor=" + Uri.EscapeDataString(cursor);
 			}
 			ServerListResponse? serverListResponse;
 			try
@@ -357,11 +361,13 @@ public partial class ActivityWatcher : IDisposable
 			}
 			catch
 			{
-				break;
+				exhausted[order] = true;
+				continue;
 			}
 			if (serverListResponse?.Data == null || serverListResponse.Data.Count == 0)
 			{
-				break;
+				exhausted[order] = true;
+				continue;
 			}
 			ServerInfo? serverInfo = serverListResponse.Data.FirstOrDefault((ServerInfo s) => s.Id == jobId);
 			if (serverInfo != null)
@@ -374,9 +380,10 @@ public partial class ActivityWatcher : IDisposable
 			}
 			if (string.IsNullOrEmpty(serverListResponse.NextPageCursor))
 			{
-				break;
+				exhausted[order] = true;
+				continue;
 			}
-			text = serverListResponse.NextPageCursor;
+			cursors[order] = serverListResponse.NextPageCursor;
 		}
 		return null;
 	}

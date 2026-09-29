@@ -15,7 +15,7 @@ public abstract class PlatformPathsBase : IPlatformPaths
 		Storage = storage;
 	}
 
-	public PlatformStoragePaths Storage { get; }
+	public PlatformStoragePaths Storage { get; protected set; }
 
 	public Task<OperationResult> EnsureDirectoriesAsync(CancellationToken cancellationToken = default)
 	{

@@ -58,7 +58,8 @@ public sealed record LinuxStudioPreparationOptions(
 	bool UseFastFlagManager = true,
 	VinegarNativeConfigurationOptions? NativeConfiguration = null,
 	bool ApplyModifications = true,
-	IReadOnlyList<LinuxModSource>? AdditionalModSources = null);
+	IReadOnlyList<LinuxModSource>? AdditionalModSources = null,
+	Func<string, bool>? IgnoreModFile = null);
 
 public interface IVinegarProcessProbe
 {

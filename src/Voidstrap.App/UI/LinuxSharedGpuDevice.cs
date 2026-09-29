@@ -53,6 +53,8 @@ public static class LinuxSharedGpuDevice
 	private static readonly PropertyInfo? ReplayRegistrationProperty = typeof(System.Windows.Media.ProGPU.ProGpuWpfWindowHost).GetProperty("RenderDataSinkProviderRegistrationFactory", InstanceMembers);
 
 	private static bool _imageAdapterFailed;
+
+	private static bool _opaqueReported;
 #endif
 
 	internal const uint MaxSurfaceSize = 8192;
@@ -78,7 +80,11 @@ public static class LinuxSharedGpuDevice
 	private static System.Windows.Media.ProGPU.ProGpuWpfWindowHost CreateHost(object window)
 	{
 		if (window is System.Windows.Window wpf && !RoundedWindowChrome.IsOverlaySurface(wpf))
+		{
+			LinuxInterfaceScale.PrepareWindow(wpf);
+			LinuxWindowSize.RespectLimits(wpf);
 			LinuxTextGuard.PrepareWindow(wpf);
+		}
 		try
 		{
 			return CreateTunedHost(window);
@@ -87,13 +93,27 @@ public static class LinuxSharedGpuDevice
 		{
 			App.Logger.WriteLine("LinuxSharedGpuDevice", "The tuned window host failed, falling back to the default host: " + ex.Message);
 			_shareDevice = false;
-			return WithOwnImageContext(new System.Windows.Media.ProGPU.ProGpuWpfWindowHost(System.Windows.Media.ProGPU.WpfPortableWindowActivation.CreateHostOptions(window)));
+			return WithOwnImageContext(new System.Windows.Media.ProGPU.ProGpuWpfWindowHost(ApplySurfaceOptions(System.Windows.Media.ProGPU.WpfPortableWindowActivation.CreateHostOptions(window))));
 		}
+	}
+
+	private static System.Windows.Media.ProGPU.ProGpuWpfWindowOptions ApplySurfaceOptions(System.Windows.Media.ProGPU.ProGpuWpfWindowOptions options)
+	{
+		if (Voidstrap.Utility.LinuxStartup.OpaqueWindows && options.TransparentFramebuffer)
+		{
+			options.TransparentFramebuffer = false;
+			if (!_opaqueReported)
+			{
+				_opaqueReported = true;
+				App.Logger.WriteLine("LinuxSharedGpuDevice", "Windows use opaque surfaces on the " + Voidstrap.Utility.LinuxStartup.ActiveStage + " renderer stage, overlays lose transparency on this graphics setup");
+			}
+		}
+		return options;
 	}
 
 	private static System.Windows.Media.ProGPU.ProGpuWpfWindowHost CreateTunedHost(object window)
 	{
-		System.Windows.Media.ProGPU.ProGpuWpfWindowOptions options = System.Windows.Media.ProGPU.WpfPortableWindowActivation.CreateHostOptions(window);
+		System.Windows.Media.ProGPU.ProGpuWpfWindowOptions options = ApplySurfaceOptions(System.Windows.Media.ProGPU.WpfPortableWindowActivation.CreateHostOptions(window));
 		ApplyCompositorOptions(options);
 		if (_shareDevice)
 		{
@@ -221,6 +241,8 @@ public static class LinuxSharedGpuDevice
 				_softwareRenderer = software;
 				if (software)
 					App.Logger.WriteLine("LinuxSharedGpuDevice", "Rendering on the CPU through " + adapter + ", windows skip multisampling to stay responsive");
+				else
+					App.Logger.WriteLine("LinuxSharedGpuDevice", "Rendering on the GPU through " + (adapter.Length > 0 ? adapter : "an unnamed adapter") + " with " + context.AdapterBackendType);
 			}
 			return software;
 		}

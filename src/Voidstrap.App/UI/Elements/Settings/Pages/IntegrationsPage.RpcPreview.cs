@@ -23,10 +23,14 @@ public partial class IntegrationsPage
     private const long FallbackPlaceId = 189707L;
     private const string FallbackGameName = "Natural Disaster Survival";
     private const string FallbackCreatorName = "Stickmasterluke";
+    private const string VoidstrapImageKey = "voidstrap";
+    private const string VoidstrapImageUri = "pack://application:,,,/Voidstrap.png";
 
     private DispatcherTimer? _rpcPreviewTimer;
-    private string _rpcLargeLoaded = string.Empty;
-    private string _rpcSmallLoaded = string.Empty;
+    private string _rpcButtonsSignature = string.Empty;
+    private int _rpcFlagCount;
+    private long _rpcFlagsFileSize = -1;
+    private long _rpcFlagsReadAt;
     private readonly PreviewImageLoad _rpcLargeImageLoad = new();
     private readonly PreviewImageLoad _rpcSmallImageLoad = new();
     private string _rpcLastElapsed = string.Empty;
@@ -39,15 +43,23 @@ public partial class IntegrationsPage
 
     private sealed class PreviewGame
     {
-        public long UniverseId { get; init; }
+        public long UniverseId { get; set; }
 
         public long UserId { get; init; }
 
+        public ActivityData Activity { get; init; } = new ActivityData { PlaceId = FallbackPlaceId };
+
         public string Name { get; set; } = FallbackGameName;
+
+        public string Description { get; set; } = string.Empty;
 
         public string Creator { get; set; } = FallbackCreatorName;
 
+        public bool Verified { get; set; }
+
         public string IconUrl { get; set; } = string.Empty;
+
+        public string Location { get; set; } = string.Empty;
     }
 
     private sealed class PreviewImageLoad
@@ -90,13 +102,10 @@ public partial class IntegrationsPage
             _rpcPreviewTimer.Tick -= RpcPreviewTimer_Tick;
             _rpcPreviewTimer = null;
         }
-        if (Voidstrap.Utility.Platform.IsLinux)
-        {
-            CancelPreviewImageLoad(_rpcLargeImageLoad);
-            CancelPreviewImageLoad(_rpcSmallImageLoad);
-            _rpcLargeImageLoad.Generation++;
-            _rpcSmallImageLoad.Generation++;
-        }
+        CancelPreviewImageLoad(_rpcLargeImageLoad);
+        CancelPreviewImageLoad(_rpcSmallImageLoad);
+        _rpcLargeImageLoad.Generation++;
+        _rpcSmallImageLoad.Generation++;
     }
 
     private void RpcPreviewTimer_Tick(object? sender, EventArgs e)
@@ -109,6 +118,12 @@ public partial class IntegrationsPage
         try
         {
             PreviewGame resolved = await ReadMostRecentGameAsync().ConfigureAwait(true);
+            if (resolved.Activity.PlaceId > 0 && resolved.UniverseId != 0)
+            {
+                string placeName = await DiscordRichPresence.GetPlaceNameAsync(resolved.Activity.PlaceId, CancellationToken.None).ConfigureAwait(true);
+                if (!string.IsNullOrWhiteSpace(placeName))
+                    resolved.Name = placeName;
+            }
             if (resolved.UniverseId != 0)
             {
                 if (UniverseDetails.LoadFromCache(resolved.UniverseId) == null)
@@ -125,16 +140,29 @@ public partial class IntegrationsPage
                 UniverseDetails? details = UniverseDetails.LoadFromCache(resolved.UniverseId);
                 if (details?.Data != null)
                 {
-                    if (!string.IsNullOrWhiteSpace(details.Data.Name))
-                        resolved.Name = details.Data.Name;
-                    if (!string.IsNullOrWhiteSpace(details.Data.Creator?.Name))
-                        resolved.Creator = details.Data.Creator.Name;
+                    if (string.Equals(resolved.Name, FallbackGameName, StringComparison.Ordinal))
+                        resolved.Name = string.IsNullOrWhiteSpace(details.Data.Name) ? "Private experience" : details.Data.Name;
+                    resolved.Description = details.Data.Description ?? string.Empty;
+                    resolved.Creator = details.Data.Creator?.Name ?? string.Empty;
+                    resolved.Verified = details.Data.Creator?.HasVerifiedBadge ?? false;
                     if (!string.IsNullOrWhiteSpace(details.Thumbnail?.ImageUrl))
                         resolved.IconUrl = details.Thumbnail.ImageUrl;
                 }
             }
-            if (string.IsNullOrWhiteSpace(resolved.IconUrl))
+            if (resolved.UniverseId == 0)
                 await ApplyFallbackGameAsync(resolved).ConfigureAwait(true);
+            if (resolved.Activity.MachineAddressValid)
+            {
+                try
+                {
+                    using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+                    resolved.Location = await resolved.Activity.QueryServerLocation(timeout.Token).ConfigureAwait(true) ?? string.Empty;
+                }
+                catch (Exception ex)
+                {
+                    App.Logger.WriteLine("IntegrationsPage", "Preview server location failed: " + ex.Message);
+                }
+            }
             _rpcPreviewGame = resolved;
             await ResolvePreviewAvatarAsync(resolved.UserId).ConfigureAwait(true);
             RefreshRpcPreview();
@@ -180,10 +208,13 @@ public partial class IntegrationsPage
             UniverseDetails? details = UniverseDetails.LoadFromCache(universeId);
             if (details?.Data == null)
                 return;
+            target.UniverseId = universeId;
             if (!string.IsNullOrWhiteSpace(details.Data.Name))
                 target.Name = details.Data.Name;
+            target.Description = details.Data.Description ?? string.Empty;
             if (!string.IsNullOrWhiteSpace(details.Data.Creator?.Name))
                 target.Creator = details.Data.Creator.Name;
+            target.Verified = details.Data.Creator?.HasVerifiedBadge ?? false;
             if (!string.IsNullOrWhiteSpace(details.Thumbnail?.ImageUrl))
                 target.IconUrl = details.Thumbnail.ImageUrl;
         }
@@ -215,7 +246,7 @@ public partial class IntegrationsPage
                 if (UniverseDetails.TryGetUniverseForPlace(newest.PlaceId, out long resolvedUniverse))
                     newest.UniverseId = resolvedUniverse;
             }
-            return new PreviewGame { UniverseId = newest.UniverseId, UserId = newest.UserId };
+            return new PreviewGame { UniverseId = newest.UniverseId, UserId = newest.UserId, Activity = newest };
         }
         catch (Exception ex)
         {
@@ -247,17 +278,8 @@ public partial class IntegrationsPage
             }
             RpcPreviewElapsed.Visibility = string.IsNullOrEmpty(elapsed) ? Visibility.Collapsed : Visibility.Visible;
 
-            if (Voidstrap.Utility.Platform.IsLinux)
-            {
-                QueuePreviewImage(RpcLargeImageHost, RpcLargeImage, snapshot.LargeImageKey, snapshot.LargeImageText, _rpcLargeImageLoad, false);
-                QueuePreviewImage(RpcSmallImageHost, RpcSmallImage, snapshot.SmallImageKey, snapshot.SmallImageText, _rpcSmallImageLoad, true);
-            }
-            else
-            {
-                ApplyPreviewImage(RpcLargeImageHost, snapshot.LargeImageKey, snapshot.LargeImageText, ref _rpcLargeLoaded);
-                bool hasSmall = ApplyPreviewImage(RpcSmallImageHost, snapshot.SmallImageKey, snapshot.SmallImageText, ref _rpcSmallLoaded);
-                RpcSmallImageHost.Visibility = hasSmall ? Visibility.Visible : Visibility.Collapsed;
-            }
+            QueuePreviewImage(RpcLargeImageHost, RpcLargeImage, snapshot.LargeImageKey, snapshot.LargeImageText, _rpcLargeImageLoad, false);
+            QueuePreviewImage(RpcSmallImageHost, RpcSmallImage, snapshot.SmallImageKey, snapshot.SmallImageText, _rpcSmallImageLoad, true);
 
             BuildPreviewButtons(snapshot);
         }
@@ -292,58 +314,64 @@ public partial class IntegrationsPage
             return new PresenceSnapshot { Active = false };
 
         PreviewGame game = _rpcPreviewGame ?? new PreviewGame();
-        string gameName = string.IsNullOrWhiteSpace(App.Settings.Prop.CustomGameName) ? game.Name : App.Settings.Prop.CustomGameName;
+        string shownName = string.IsNullOrWhiteSpace(App.Settings.Prop.CustomGameName) ? game.Name : App.Settings.Prop.CustomGameName;
+        (string cleanName, string? betaTag) = DiscordRichPresence.ExtractBetaTag(shownName, game.Description);
+
         PresenceSnapshot snapshot = new PresenceSnapshot
         {
             Active = true,
-            Details = App.Settings.Prop.GameNameChecked ? gameName : string.Empty,
+            Details = DiscordRichPresence.BuildDetailText(cleanName, betaTag, game.Creator, game.Verified),
+            State = DiscordRichPresence.BuildStateText(
+                game.Activity.ServerType,
+                string.Empty,
+                App.Settings.Prop.ServerLocationGame && game.Location.Length > 0 ? game.Location : null,
+                App.Settings.Prop.FFlagRPCDisplayer ? ReadFlagCount() : 0),
             Start = _rpcPreviewStart,
         };
 
-        string state = string.Empty;
-        if (App.Settings.Prop.GameCreatorChecked && !string.IsNullOrWhiteSpace(game.Creator))
-            state = "by " + game.Creator;
-        if (App.Settings.Prop.FFlagRPCDisplayer)
-            state = state.Length == 0 ? "FFlags: " + CountActiveFlags() : state + " | FFlags: " + CountActiveFlags();
-        if (App.Settings.Prop.GameStatusChecked)
-            state = state.Length == 0 ? "Public server" : state + " | Public server";
-        snapshot.State = state;
-
-        if (!string.IsNullOrWhiteSpace(App.Settings.Prop.UseCustomIcon))
-            snapshot.LargeImageKey = App.Settings.Prop.UseCustomIcon;
-        else if (App.Settings.Prop.GameIconChecked)
-            snapshot.LargeImageKey = game.IconUrl;
-        if (App.Settings.Prop.GameIconChecked)
-            snapshot.LargeImageText = gameName;
+        string largeImage = !string.IsNullOrWhiteSpace(App.Settings.Prop.UseCustomIcon)
+            ? App.Settings.Prop.UseCustomIcon
+            : App.Settings.Prop.GameIconChecked ? game.IconUrl : string.Empty;
+        snapshot.LargeImageKey = Voidstrap.Utility.DiscordPresenceGuard.Key(largeImage);
+        snapshot.LargeImageText = DiscordRichPresence.BuildLargeImageText(shownName, game.Creator);
 
         if (App.Settings.Prop.ShowAccountOnRichPresence && !string.IsNullOrWhiteSpace(_rpcAvatarUrl))
         {
             snapshot.SmallImageKey = _rpcAvatarUrl;
             snapshot.SmallImageText = _rpcAvatarText;
         }
-
-        if (!App.Settings.Prop.HideRPCButtons)
+        else
         {
-            snapshot.Buttons.Add(new PresenceButton { Label = "Join server", Url = "https://www.roblox.com/games/" + FallbackPlaceId });
-            snapshot.Buttons.Add(new PresenceButton { Label = "See game page", Url = "https://www.roblox.com/games/" + FallbackPlaceId });
+            snapshot.SmallImageKey = VoidstrapImageKey;
+            snapshot.SmallImageText = "Voidstrap";
         }
+
+        foreach (DiscordRPC.Button button in DiscordRichPresence.BuildButtons(game.Activity))
+            snapshot.Buttons.Add(new PresenceButton { Label = button.Label ?? string.Empty, Url = button.Url ?? string.Empty });
         return snapshot;
     }
 
-    private static int CountActiveFlags()
+    private int ReadFlagCount()
     {
         try
         {
+            long now = Environment.TickCount64;
+            if (_rpcFlagsReadAt != 0 && now - _rpcFlagsReadAt < 5000)
+                return _rpcFlagCount;
+            _rpcFlagsReadAt = now;
             string path = Path.Combine(Paths.Mods, "ClientSettings", "ClientAppSettings.json");
             if (!File.Exists(path))
+            {
+                _rpcFlagsFileSize = -1;
+                _rpcFlagCount = 0;
                 return 0;
-			JsonElement root = Voidstrap.Utility.JsonFile.Deserialize<JsonElement>(path, Voidstrap.Utility.JsonOptions.Tolerant, 16777216);
-			if (root.ValueKind != JsonValueKind.Object)
-                return 0;
-            int count = 0;
-			foreach (JsonProperty _ in root.EnumerateObject())
-                count++;
-            return count;
+            }
+            long size = new FileInfo(path).Length;
+            if (size == _rpcFlagsFileSize)
+                return _rpcFlagCount;
+            _rpcFlagsFileSize = size;
+            _rpcFlagCount = size > 16777216 ? 0 : DiscordRichPresence.ParseFlagCount(File.ReadAllText(path));
+            return _rpcFlagCount;
         }
         catch
         {
@@ -368,44 +396,14 @@ public partial class IntegrationsPage
         return clock + " elapsed";
     }
 
-    private static bool ApplyPreviewImage(Border target, string key, string tooltip, ref string loaded)
-    {
-        target.ToolTip = string.IsNullOrEmpty(tooltip) ? null : tooltip;
-        if (string.IsNullOrWhiteSpace(key) || string.Equals(key, "voidstrap", StringComparison.OrdinalIgnoreCase))
-        {
-            if (loaded.Length != 0)
-            {
-                target.SetResourceReference(Border.BackgroundProperty, "ControlFillColorSecondaryBrush");
-                loaded = string.Empty;
-            }
-            return false;
-        }
-        if (string.Equals(loaded, key, StringComparison.Ordinal))
-            return target.Background is ImageBrush;
-        loaded = key;
-        if (!Uri.TryCreate(key, UriKind.Absolute, out Uri? uri) || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != "data"))
-        {
-            target.SetResourceReference(Border.BackgroundProperty, "ControlFillColorSecondaryBrush");
-            return false;
-        }
-        ImageSource? source = Voidstrap.Utility.AppImage.LoadSync(key, 160);
-        if (source == null)
-        {
-            target.SetResourceReference(Border.BackgroundProperty, "ControlFillColorSecondaryBrush");
-            return false;
-        }
-        ImageBrush brush = new ImageBrush(source) { Stretch = Stretch.UniformToFill };
-        brush.Freeze();
-        target.Background = brush;
-        return true;
-    }
-
     private void QueuePreviewImage(Border host, Image image, string key, string tooltip, PreviewImageLoad state, bool hideHostWhenEmpty)
     {
         host.ToolTip = string.IsNullOrEmpty(tooltip) ? null : tooltip;
+        if (string.Equals(key, VoidstrapImageKey, StringComparison.OrdinalIgnoreCase))
+            key = VoidstrapImageUri;
         if (!IsPreviewImageKeySupported(key))
         {
-            if (string.IsNullOrWhiteSpace(key) || string.Equals(key, "voidstrap", StringComparison.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(key))
             {
                 ResetPreviewImage(host, image, state, hideHostWhenEmpty);
                 return;
@@ -506,7 +504,7 @@ public partial class IntegrationsPage
 
     private static bool IsPreviewImageKeySupported(string key)
     {
-        if (string.IsNullOrWhiteSpace(key) || string.Equals(key, "voidstrap", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(key))
             return false;
         if (key.StartsWith("data:", StringComparison.OrdinalIgnoreCase) || File.Exists(key))
             return true;
@@ -547,13 +545,10 @@ public partial class IntegrationsPage
 
     private void BuildPreviewButtons(PresenceSnapshot snapshot)
     {
-        if (RpcPreviewButtons.Children.Count == snapshot.Buttons.Count && snapshot.Buttons.Count == 0)
-        {
-            RpcPreviewButtons.Visibility = Visibility.Collapsed;
+        string signature = string.Join("\n", snapshot.Buttons.Select(button => button.Label + "\t" + button.Url));
+        if (string.Equals(signature, _rpcButtonsSignature, StringComparison.Ordinal) && RpcPreviewButtons.Children.Count == Math.Min(snapshot.Buttons.Count, 2))
             return;
-        }
-        if (RpcPreviewButtons.Children.Count == snapshot.Buttons.Count)
-            return;
+        _rpcButtonsSignature = signature;
         RpcPreviewButtons.Children.Clear();
         if (snapshot.Buttons.Count == 0)
         {

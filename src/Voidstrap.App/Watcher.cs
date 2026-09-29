@@ -52,6 +52,8 @@ public partial class Watcher : IDisposable
 
 	private Timer? _settingsReloadTimer;
 
+	private Timer? _brightnessSettleTimer;
+
 	private bool _activityTrackingEnabled;
 	private bool _overlayGameStateEnabled;
 
@@ -195,10 +197,14 @@ public partial class Watcher : IDisposable
 		}
 		try
 		{
-			AppSettings? settings = JsonFile.Deserialize<AppSettings>(App.Settings.FileLocation, JsonOptions.Tolerant, MaximumSettingsBytes);
-			if (settings == null)
+			AppSettings? settings = null;
+			if (!Voidstrap.Utility.Platform.IsLinux || App.Settings.HasFileOnDiskChanged())
 			{
-				return;
+				settings = JsonFile.Deserialize<AppSettings>(App.Settings.FileLocation, JsonOptions.Tolerant, MaximumSettingsBytes);
+				if (settings == null)
+				{
+					return;
+				}
 			}
 			lock (_lifecycleGate)
 			{
@@ -206,7 +212,10 @@ public partial class Watcher : IDisposable
 				{
 					return;
 				}
-				App.Settings.Prop = settings;
+				if (settings != null)
+				{
+					App.Settings.Prop = settings;
+				}
 				ApplyLiveSettings();
 			}
 		}
@@ -526,6 +535,30 @@ public partial class Watcher : IDisposable
 				Application.Current.Resources["OverlayWindow"] = overlay;
 			}, "CreateOverlay");
 		}
+	}
+
+	internal void ApplyBrightnessLive()
+	{
+		if (_disposed || ActivityWatcher?.InGame != true)
+		{
+			return;
+		}
+
+		try
+		{
+			_brightnessSettleTimer ??= new Timer(delegate { RunOnApplicationDispatcher(ReconcileRuntimeSessionWindows); }, null, Timeout.Infinite, Timeout.Infinite);
+			_brightnessSettleTimer.Change(1500, Timeout.Infinite);
+		}
+		catch (ObjectDisposedException)
+		{
+		}
+
+		if (Application.Current?.Resources["OverlayWindow"] is OverlayWindow overlay && overlay.TryApplyLiveBrightness())
+		{
+			return;
+		}
+
+		ReconcileRuntimeSessionWindows();
 	}
 
 	private void ReconcileRuntimeSessionWindows()
@@ -1150,6 +1183,8 @@ public partial class Watcher : IDisposable
 				_settingsReloadTimer.DisposeAsync().AsTask().ConfigureAwait(continueOnCapturedContext: false).GetAwaiter().GetResult();
 			}
 			_settingsReloadTimer = null;
+			_brightnessSettleTimer?.Dispose();
+			_brightnessSettleTimer = null;
 		}
 		catch
 		{

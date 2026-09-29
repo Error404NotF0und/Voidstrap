@@ -28,9 +28,11 @@
 		<IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
 		<EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
 		<PublishReadyToRun Condition="'$(PublishReadyToRun)' == ''">false</PublishReadyToRun>
+		<TieredPGO>false</TieredPGO>
 		<LinuxProGpuWpfAssembly>$(MSBuildProjectDirectory)\..\..\external\LibreWPF\ProGPU.Wpf.dll</LinuxProGpuWpfAssembly>
 		<LinuxPresentationCoreAssembly>$(MSBuildProjectDirectory)\..\..\external\LibreWPF\PresentationCore.dll</LinuxPresentationCoreAssembly>
 		<LinuxPresentationFrameworkAssembly>$(MSBuildProjectDirectory)\..\..\external\LibreWPF\PresentationFramework.dll</LinuxPresentationFrameworkAssembly>
+		<LinuxWgpuLibrary>$(MSBuildProjectDirectory)\..\..\external\LibreWPF\$(RuntimeIdentifier)\libwgpu_native.so</LinuxWgpuLibrary>
 	</PropertyGroup>
 
 	<ItemGroup Condition="$(RuntimeIdentifier.StartsWith('linux'))">
@@ -267,6 +269,17 @@
 			<_FilesToBundle Include="$(LinuxProGpuWpfAssembly)" RelativePath="ProGPU.Wpf.dll" />
 			<_FilesToBundle Include="$(LinuxPresentationCoreAssembly)" RelativePath="PresentationCore.dll" />
 			<_FilesToBundle Include="$(LinuxPresentationFrameworkAssembly)" RelativePath="PresentationFramework.dll" />
+		</ItemGroup>
+	</Target>
+
+	<Target Name="UseVendoredLinuxWgpu" AfterTargets="ResolvePackageAssets" Condition="$(RuntimeIdentifier.StartsWith('linux')) And Exists('$(LinuxWgpuLibrary)')">
+		<ItemGroup>
+			<_VoidstrapPackagedWgpuRuntime Include="@(RuntimeCopyLocalItems)" Condition="'%(RuntimeCopyLocalItems.Filename)%(RuntimeCopyLocalItems.Extension)' == 'libwgpu_native.so'" />
+			<RuntimeCopyLocalItems Remove="@(_VoidstrapPackagedWgpuRuntime)" />
+			<RuntimeCopyLocalItems Include="@(_VoidstrapPackagedWgpuRuntime->'$(LinuxWgpuLibrary)')" />
+			<_VoidstrapPackagedWgpuNative Include="@(NativeCopyLocalItems)" Condition="'%(NativeCopyLocalItems.Filename)%(NativeCopyLocalItems.Extension)' == 'libwgpu_native.so'" />
+			<NativeCopyLocalItems Remove="@(_VoidstrapPackagedWgpuNative)" />
+			<NativeCopyLocalItems Include="@(_VoidstrapPackagedWgpuNative->'$(LinuxWgpuLibrary)')" />
 		</ItemGroup>
 	</Target>
 

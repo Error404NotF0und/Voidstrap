@@ -407,6 +407,21 @@ public static partial class LinuxWindowInterop
 		}
 	}
 
+	public static bool IsRuntimeWindowHandle(nint window)
+	{
+		nint display = Display;
+		if (display == 0 || window == 0)
+			return false;
+		try
+		{
+			return IsRuntimeWindow(display, window);
+		}
+		catch (Exception)
+		{
+			return false;
+		}
+	}
+
 	public static bool IsSoberRuntimeWindow(nint window)
 	{
 		nint display = Display;
@@ -1708,6 +1723,46 @@ public static partial class LinuxWindowInterop
 		}
 	}
 
+	public static bool TryGetXftDpi(out double dpi)
+	{
+		dpi = 0.0;
+		nint display = Display;
+		if (display == 0)
+			return false;
+
+		nint data = 0;
+		try
+		{
+			nint root = XDefaultRootWindow(display);
+			nint property = XInternAtom(display, "RESOURCE_MANAGER", true);
+			if (root == 0
+				|| property == 0
+				|| !TryGetProperty(display, root, property, out data, out ulong count, out int format)
+				|| format != 8)
+				return false;
+
+			foreach (string line in ReadUtf8(data, (int)Math.Min(count, int.MaxValue)).Split('\n'))
+			{
+				int separator = line.IndexOf(':');
+				if (separator <= 0 || !string.Equals(line[..separator].Trim(), "Xft.dpi", StringComparison.Ordinal))
+					continue;
+				return double.TryParse(line[(separator + 1)..].Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out dpi)
+					&& double.IsFinite(dpi)
+					&& dpi > 0.0;
+			}
+			return false;
+		}
+		catch (Exception)
+		{
+			return false;
+		}
+		finally
+		{
+			if (data != 0)
+				_ = XFree(data);
+		}
+	}
+
 	public static bool TryGetPrimaryMonitorBounds(out int left, out int top, out int width, out int height)
 	{
 		left = 0;
@@ -1765,25 +1820,90 @@ public static partial class LinuxWindowInterop
 		if (!TryGetPrimaryMonitorBounds(out left, out top, out width, out height))
 			return false;
 
+		ClipToWorkArea(left, top, width, height, out workLeft, out workTop, out workWidth, out workHeight);
+		return true;
+	}
+
+	public static bool TryGetMonitorWorkAreaAt(int x, int y, out int workLeft, out int workTop, out int workWidth, out int workHeight)
+	{
+		workLeft = 0;
+		workTop = 0;
+		workWidth = 0;
+		workHeight = 0;
+		nint display = Display;
+		if (display == 0)
+			return false;
+
+		int left = 0;
+		int top = 0;
+		int width = 0;
+		int height = 0;
+		nint monitors = 0;
+		try
+		{
+			monitors = XRRGetMonitors(display, XDefaultRootWindow(display), 1, out int count);
+			if (monitors == 0 || count <= 0)
+				return false;
+
+			bool found = false;
+			for (int index = 0; index < count && !found; index++)
+			{
+				nint entry = monitors + index * MonitorInfoSize;
+				int monitorLeft = Marshal.ReadInt32(entry, 20);
+				int monitorTop = Marshal.ReadInt32(entry, 24);
+				int monitorWidth = Marshal.ReadInt32(entry, 28);
+				int monitorHeight = Marshal.ReadInt32(entry, 32);
+				if (monitorWidth <= 0
+					|| monitorHeight <= 0
+					|| x < monitorLeft
+					|| y < monitorTop
+					|| x >= monitorLeft + monitorWidth
+					|| y >= monitorTop + monitorHeight)
+					continue;
+
+				left = monitorLeft;
+				top = monitorTop;
+				width = monitorWidth;
+				height = monitorHeight;
+				found = true;
+			}
+			if (!found)
+				return false;
+		}
+		catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+		{
+			return false;
+		}
+		finally
+		{
+			if (monitors != 0)
+				XRRFreeMonitors(monitors);
+		}
+
+		ClipToWorkArea(left, top, width, height, out workLeft, out workTop, out workWidth, out workHeight);
+		return true;
+	}
+
+	private static void ClipToWorkArea(int left, int top, int width, int height, out int workLeft, out int workTop, out int workWidth, out int workHeight)
+	{
 		workLeft = left;
 		workTop = top;
 		workWidth = width;
 		workHeight = height;
-		if (TryGetWorkArea(out int areaLeft, out int areaTop, out int areaWidth, out int areaHeight))
+		if (!TryGetWorkArea(out int areaLeft, out int areaTop, out int areaWidth, out int areaHeight))
+			return;
+
+		int right = Math.Min(left + width, areaLeft + areaWidth);
+		int bottom = Math.Min(top + height, areaTop + areaHeight);
+		int clippedLeft = Math.Max(left, areaLeft);
+		int clippedTop = Math.Max(top, areaTop);
+		if (right - clippedLeft >= width / 2 && bottom - clippedTop >= height / 2)
 		{
-			int right = Math.Min(left + width, areaLeft + areaWidth);
-			int bottom = Math.Min(top + height, areaTop + areaHeight);
-			int clippedLeft = Math.Max(left, areaLeft);
-			int clippedTop = Math.Max(top, areaTop);
-			if (right - clippedLeft >= width / 2 && bottom - clippedTop >= height / 2)
-			{
-				workLeft = clippedLeft;
-				workTop = clippedTop;
-				workWidth = right - clippedLeft;
-				workHeight = bottom - clippedTop;
-			}
+			workLeft = clippedLeft;
+			workTop = clippedTop;
+			workWidth = right - clippedLeft;
+			workHeight = bottom - clippedTop;
 		}
-		return true;
 	}
 
 	public static bool TryGetScreenBounds(out int width, out int height)
@@ -2049,6 +2169,90 @@ public static partial class LinuxWindowInterop
 			finally
 			{
 				Marshal.FreeHGlobal(buffer);
+			}
+
+			return true;
+		}
+		catch (DllNotFoundException)
+		{
+			return false;
+		}
+		catch (EntryPointNotFoundException)
+		{
+			return false;
+		}
+	}
+
+	public static bool TryGetWindowDepth(nint window, out int depth)
+	{
+		depth = 0;
+		nint display = Display;
+		if (display == 0 || window == 0)
+			return false;
+
+		try
+		{
+			lock (Sync)
+			{
+				if (XGetWindowAttributes(display, window, out XWindowAttributes attributes) == 0)
+					return false;
+				depth = attributes.Depth;
+				return depth > 0;
+			}
+		}
+		catch (DllNotFoundException)
+		{
+			return false;
+		}
+		catch (EntryPointNotFoundException)
+		{
+			return false;
+		}
+	}
+
+	public static bool TrySetOffsetRoundedShape(nint window, int left, int width, int height, int radius, int clipWidth, int clipHeight)
+	{
+		nint display = Display;
+		if (display == 0 || window == 0 || width <= 0 || height <= 0 || clipWidth <= 0 || clipHeight <= 0)
+			return false;
+
+		radius = Math.Clamp(radius, 0, Math.Min(width, height) / 2);
+		try
+		{
+			List<XRectangle> rectangles = new(radius * 2 + 1);
+			void AddRow(int start, int end, int top, int rows)
+			{
+				start = Math.Max(start, 0);
+				end = Math.Min(end, clipWidth);
+				top = Math.Max(top, 0);
+				rows = Math.Min(rows, clipHeight - top);
+				if (end > start && rows > 0)
+					rectangles.Add(new XRectangle((short)start, (short)top, (ushort)(end - start), (ushort)rows));
+			}
+
+			for (int y = 0; y < radius; y++)
+			{
+				double dy = radius - y - 0.5;
+				int inset = (int)Math.Round(radius - Math.Sqrt(radius * radius - dy * dy));
+				AddRow(left + inset, left + width - inset, y, 1);
+				AddRow(left + inset, left + width - inset, height - y - 1, 1);
+			}
+			AddRow(left, left + width, radius, height - radius * 2);
+
+			int size = Marshal.SizeOf<XRectangle>();
+			nint buffer = rectangles.Count > 0 ? Marshal.AllocHGlobal(size * rectangles.Count) : 0;
+			try
+			{
+				for (int i = 0; i < rectangles.Count; i++)
+					Marshal.StructureToPtr(rectangles[i], buffer + i * size, false);
+
+				XShapeCombineRectangles(display, window, ShapeBounding, 0, 0, buffer, rectangles.Count, ShapeSet, Unsorted);
+				_ = XFlush(display);
+			}
+			finally
+			{
+				if (buffer != 0)
+					Marshal.FreeHGlobal(buffer);
 			}
 
 			return true;

@@ -110,6 +110,7 @@ internal static class WindowAudit
 		AuditTabPillPresentation();
 #endif
 		AuditScrolling();
+		AuditDatacenterToggles();
 		AuditThemeTransition();
 		AuditShadows();
 		AuditDropdownLifecycle();
@@ -284,7 +285,7 @@ internal static class WindowAudit
 
 			window.Prewarm();
 			if (Voidstrap.Utility.Platform.IsLinux)
-				PumpUntil(() => !window.IsVisible, 3000);
+				PumpUntil(() => window.IsVisible && window.Left <= -30000, 3000);
 
 			window.ShowNotification("Game join icon audit\nDallas • 1 player", icon, 3);
 			System.Windows.Controls.Image? imageSurface = null;
@@ -2642,11 +2643,10 @@ internal static class WindowAudit
 		string symbol = icon is Wpf.Ui.Controls.SymbolIcon glyph ? glyph.Symbol.ToString() : "n/a";
 		bool sized = grid is not null && grid.ActualWidth > 1 && grid.ActualHeight > 1;
 		bool shown = grid?.IsVisible == true && grid.Opacity > 0.5;
-		bool expected = state == "expanded"
-			? symbol == "ChevronUp24"
-			: symbol == "ChevronDown24";
+		bool expected = symbol == "ChevronDown24"
+			&& Math.Abs(angle - (state == "expanded" ? 180.0 : 0.0)) < 1.0;
 		Emit((sized && shown && expected ? "  chevron PASS " : "  chevron FAIL ")
-			+ $"{state}: symbol {symbol}, grid {grid?.ActualWidth ?? -1:F1}x{grid?.ActualHeight ?? -1:F1}"
+			+ $"{state}: symbol {symbol}, angle {angle:F1}, grid {grid?.ActualWidth ?? -1:F1}x{grid?.ActualHeight ?? -1:F1}"
 			+ $", visible {grid?.IsVisible}, opacity {grid?.Opacity ?? -1:F2}, bounds {bounds}");
 	}
 
@@ -4200,7 +4200,7 @@ internal static class WindowAudit
 			if (material is not null)
 				CountGlassLayers(material, ref blurLayers, ref tintLayers, ref grainLayers);
 
-			bool materialBlurs = blurLayers >= 1;
+			bool materialBlurs = blurLayers >= 1 || Voidstrap.UI.LinuxInterfaceScale.EffectsDisabled;
 			bool materialTints = tintLayers >= 2;
 			bool materialGrains = grainLayers >= 1;
 
@@ -5096,6 +5096,223 @@ internal static class WindowAudit
 			probe?.Close();
 			Pump(40);
 		}
+	}
+
+	private static void AuditClipboard()
+	{
+		if (!Voidstrap.Utility.Platform.IsLinux)
+			return;
+
+		Window? probe = null;
+		try
+		{
+			System.Windows.Controls.TextBox box = new() { Width = 300, Height = 30, AcceptsReturn = true };
+			probe = new Window
+			{
+				Width = 320,
+				Height = 60,
+				Left = -4000,
+				Top = -4000,
+				Content = box,
+				ShowInTaskbar = false,
+				ShowActivated = false,
+				WindowStyle = WindowStyle.None
+			};
+			probe.Show();
+			Pump(300);
+			Emit($"clipboard audit: bridge active={Voidstrap.UI.LinuxClipboardBridge.IsActive} tracks changes={Voidstrap.Platform.Linux.LinuxClipboard.TracksChanges}");
+
+			string Paste()
+			{
+				box.Clear();
+				System.Windows.Input.ApplicationCommands.Paste.Execute(null, box);
+				Pump(20);
+				return box.Text;
+			}
+
+			string first = string.Empty;
+			bool external = PumpUntil(() => (first = Paste()) == "external one", 15000);
+			Emit($"clipboard audit: {(external ? "PASS" : "FAIL")}, text box paste read another app, got \"{Shorten(first)}\"");
+
+			box.Text = "voidstrap copy one";
+			box.SelectAll();
+			System.Windows.Input.ApplicationCommands.Copy.Execute(null, box);
+			Pump(200);
+			Emit("clipboard audit: copied from a text box");
+
+			string large = string.Empty;
+			bool refreshed = PumpUntil(() => (large = Paste()).Length == 200000 && large.StartsWith("LARGE", StringComparison.Ordinal), 20000);
+			Emit($"clipboard audit: {(refreshed ? "PASS" : "FAIL")}, paste followed a new copy in another app with an incremental transfer, got {large.Length} characters");
+
+			Voidstrap.Utility.ClipboardService.SetText("button copy");
+			Pump(200);
+			string button = Paste();
+			Emit($"clipboard audit: {(button == "button copy" ? "PASS" : "FAIL")}, a copy button and text box paste agree, got \"{Shorten(button)}\"");
+			Pump(8000);
+		}
+		catch (Exception ex)
+		{
+			Emit("clipboard audit: FAIL, " + ex.GetType().Name + ": " + ex.Message.Split('\n')[0]);
+		}
+		finally
+		{
+			probe?.Close();
+			Pump(120);
+		}
+
+		static string Shorten(string value) => value.Length > 40 ? value[..40] : value;
+	}
+
+	private static void AuditDatacenterToggles()
+	{
+		Window? probe = null;
+		try
+		{
+			List<AuditDatacenterRow> rows = new();
+			for (int index = 0; index < 60; index++)
+				rows.Add(new AuditDatacenterRow { Location = "Datacenter " + index, DistanceDisplay = index * 100 + " km away", PingDisplay = index + " ms" });
+			const string markup = """
+				<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" BorderThickness="1" CornerRadius="4" MaxHeight="420">
+				  <DataGrid AutoGenerateColumns="False" HeadersVisibility="Column" CanUserAddRows="False" CanUserDeleteRows="False" CanUserResizeRows="False" GridLinesVisibility="None" IsReadOnly="True" RowHeaderWidth="0" Background="#00FFFFFF" BorderThickness="0" RowHeight="42">
+				    <DataGrid.Columns>
+				      <DataGridTemplateColumn Header="Allow" Width="70" CanUserSort="False" />
+				      <DataGridTemplateColumn Header="Datacenter" Width="*" MinWidth="180">
+				        <DataGridTemplateColumn.CellTemplate>
+				          <DataTemplate>
+				            <StackPanel VerticalAlignment="Center">
+				              <TextBlock Text="{Binding Location}" />
+				              <TextBlock FontSize="11" Text="{Binding DistanceDisplay}" />
+				            </StackPanel>
+				          </DataTemplate>
+				        </DataGridTemplateColumn.CellTemplate>
+				      </DataGridTemplateColumn>
+				      <DataGridTextColumn Header="Latency" Width="100" MinWidth="80" Binding="{Binding PingDisplay}" />
+				    </DataGrid.Columns>
+				  </DataGrid>
+				</Border>
+				""";
+			System.Windows.Controls.Border border = (System.Windows.Controls.Border)System.Windows.Markup.XamlReader.Parse(markup);
+			System.Windows.Controls.DataGrid grid = (System.Windows.Controls.DataGrid)border.Child;
+			Voidstrap.UI.Elements.Settings.Pages.BehaviourPage page = new();
+			if (page.FindName("DatacentersGrid") is not System.Windows.Controls.DataGrid pageGrid
+				|| pageGrid.Columns.FirstOrDefault() is not System.Windows.Controls.DataGridTemplateColumn pageColumn
+				|| grid.Columns[0] is not System.Windows.Controls.DataGridTemplateColumn column)
+			{
+				Emit("datacenter toggle audit: FAIL, the Deployment page datacenter grid was not found");
+				return;
+			}
+			column.CellTemplate = pageColumn.CellTemplate;
+			grid.ItemsSource = rows;
+			probe = new Window
+			{
+				Width = 520,
+				Height = 460,
+				Left = -4000,
+				Top = -4000,
+				Content = border,
+				ShowInTaskbar = false,
+				ShowActivated = false,
+				WindowStyle = WindowStyle.None
+			};
+			probe.Show();
+			Pump(300);
+			grid.UpdateLayout();
+
+			AuditDatacenterRow target = rows[2];
+			Wpf.Ui.Controls.ToggleSwitch? toggle = FindDescendants<Wpf.Ui.Controls.ToggleSwitch>(grid).FirstOrDefault(item => ReferenceEquals(item.DataContext, target));
+			if (toggle is null)
+			{
+				Emit("datacenter toggle audit: FAIL, the third row toggle was not realized");
+				return;
+			}
+			((System.Windows.Automation.Provider.IToggleProvider)new System.Windows.Automation.Peers.ToggleButtonAutomationPeer(toggle)).Toggle();
+			Pump(300);
+			Emit($"datacenter toggle audit: after toggle row2 allowed={target.IsAllowed} writes={target.Writes} toggle={toggle.IsChecked}");
+			System.Windows.Data.BindingExpression? expression = System.Windows.Data.BindingOperations.GetBindingExpression(toggle, System.Windows.Controls.Primitives.ToggleButton.IsCheckedProperty);
+			System.Windows.Data.BindingGroup? group = expression?.BindingGroup;
+			Emit($"datacenter toggle audit: binding status={expression?.Status} dirty={expression?.IsDirty} error={expression?.HasError} trigger={expression?.ParentBinding.UpdateSourceTrigger} group={(group is null ? "none" : group.Name + " dirty=" + group.IsDirty + " items=" + group.Items.Count + " shares=" + group.SharesProposedValues)} groupOwner={group?.Owner?.GetType().Name}");
+
+			System.Windows.Controls.ScrollViewer? viewer = FindDescendants<System.Windows.Controls.ScrollViewer>(grid).FirstOrDefault();
+			if (viewer is null)
+			{
+				Emit("datacenter toggle audit: FAIL, no scroll viewer");
+				return;
+			}
+			bool scrollByItem = viewer.CanContentScroll;
+			Emit($"datacenter toggle audit: extent={viewer.ExtentHeight:F0} viewport={viewer.ViewportHeight:F0} canContentScroll={viewer.CanContentScroll} mode={System.Windows.Controls.VirtualizingPanel.GetVirtualizationMode(grid)} virtualizing={System.Windows.Controls.VirtualizingPanel.GetIsVirtualizing(grid)}");
+			for (int pass = 0; pass < 3; pass++)
+			{
+				for (double offset = 0; offset <= viewer.ScrollableHeight; offset += scrollByItem ? 3 : 126)
+				{
+					viewer.ScrollToVerticalOffset(offset);
+					Pump(40);
+				}
+				viewer.ScrollToEnd();
+				Pump(120);
+				for (double offset = viewer.ScrollableHeight; offset >= 0; offset -= scrollByItem ? 3 : 126)
+				{
+					viewer.ScrollToVerticalOffset(offset);
+					Pump(40);
+				}
+				viewer.ScrollToHome();
+				Pump(200);
+			}
+			grid.UpdateLayout();
+
+			int mismatched = 0;
+			int realized = 0;
+			foreach (Wpf.Ui.Controls.ToggleSwitch item in FindDescendants<Wpf.Ui.Controls.ToggleSwitch>(grid))
+			{
+				if (item.DataContext is not AuditDatacenterRow row)
+					continue;
+				realized++;
+				if (item.IsChecked != row.IsAllowed)
+				{
+					mismatched++;
+					Emit($"datacenter toggle audit: {row.Location} shows {item.IsChecked} but the data says {row.IsAllowed}");
+				}
+			}
+			int unexpected = rows.Count(row => !ReferenceEquals(row, target) && !row.IsAllowed);
+			bool passed = !target.IsAllowed && target.Writes == 1 && mismatched == 0 && unexpected == 0;
+			Emit($"datacenter toggle audit: {(passed ? "PASS" : "FAIL")}, row2 allowed={target.IsAllowed} writes={target.Writes}, other rows turned off={unexpected}, realized toggles={realized}, mismatched={mismatched}");
+		}
+		catch (Exception ex)
+		{
+			Emit("datacenter toggle audit: FAIL, " + ex.GetType().Name + ": " + ex.Message.Split('\n')[0]);
+		}
+		finally
+		{
+			probe?.Close();
+			Pump(120);
+		}
+	}
+
+	private sealed class AuditDatacenterRow : System.ComponentModel.INotifyPropertyChanged
+	{
+		private bool _isAllowed = true;
+
+		public string Location { get; init; } = "";
+
+		public string DistanceDisplay { get; init; } = "";
+
+		public string PingDisplay { get; init; } = "";
+
+		public int Writes { get; private set; }
+
+		public bool IsAllowed
+		{
+			get => _isAllowed;
+			set
+			{
+				if (_isAllowed == value)
+					return;
+				_isAllowed = value;
+				Writes++;
+				PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(IsAllowed)));
+			}
+		}
+
+		public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
 	}
 
 	private static void AuditScrolling()

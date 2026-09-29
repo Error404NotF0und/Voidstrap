@@ -57,6 +57,8 @@ public partial class App : Application
 
 	public const string ProjectLogoUrl = "https://raw.githubusercontent.com/KloBraticc/Voidstrap/main/src/Voidstrap.App/Voidstrap.png";
 
+	public const string RpcLoadingImageUrl = "https://raw.githubusercontent.com/KloBraticc/Voidstrap/main/assets/Images/rpc-loading.gif";
+
 	public const string ProjectSupportLink = "https://github.com/KloBraticc/Voidstrap/issues/new";
 	public const string ProjectFallbackSupportLink = ProjectFallbackRepository + "/issues/new";
 	public const string ProjectIssuesLink = "https://github.com/KloBraticc/Voidstrap/issues";
@@ -166,9 +168,15 @@ public partial class App : Application
 		ShutdownApplication(exitCodeNum);
 	}
 
+	private static bool _closeRuntimeForRestart;
+
 	private static void CloseRuntimeOnExit()
 	{
 		if (!Voidstrap.Utility.Platform.IsLinux)
+		{
+			return;
+		}
+		if (!_closeRuntimeForRestart && !Voidstrap.Platform.Linux.LinuxSoberRuntimeProvider.StartedInThisProcess)
 		{
 			return;
 		}
@@ -236,6 +244,7 @@ public partial class App : Application
 	{
 		if (closeRuntime)
 		{
+			_closeRuntimeForRestart = true;
 			SoftTerminate();
 			return;
 		}
@@ -762,8 +771,11 @@ public partial class App : Application
 	private async Task StartAsync(string[] args)
 	{
 		LinuxUiPerformance.Install();
+		TryStartup("Interface scale", Voidstrap.UI.LinuxInterfaceScale.Install);
 		TryStartup("Shared GPU device", Voidstrap.UI.LinuxSharedGpuDevice.Install);
 		TryStartup("Subpixel text", Voidstrap.UI.LinuxSubpixelText.Install);
+		TryStartup("Image filtering", Voidstrap.UI.LinuxImageFiltering.Install);
+		TryStartup("System clipboard", Voidstrap.UI.LinuxClipboardBridge.Install);
 		TryStartup("Font catalog order", Voidstrap.UI.LinuxFontCatalog.Install);
 		TryStartup("Text fallback", Voidstrap.UI.LinuxTextFallback.Install);
 #if CROSSPLAT
@@ -781,6 +793,7 @@ public partial class App : Application
 		TryStartup("Pointer hit testing", Voidstrap.UI.LinuxPointerHitTest.Install);
 		TryStartup("Grid scrolling", Voidstrap.UI.LinuxDataGridScroll.Install);
 		TryStartup("Image guard", Voidstrap.Utility.DynamicRenderSystem.InstallLinuxImageGuard);
+		TryStartup("Background web images", Voidstrap.UI.LinuxWebImageSource.Install);
 		TryStartup("Progress bar motion", Voidstrap.UI.SmoothProgress.Install);
 		if (OperatingSystem.IsLinux())
 		{
@@ -957,11 +970,14 @@ public partial class App : Application
 		long languageStarted = Stopwatch.GetTimestamp();
 		InitializeLanguage();
 		LinuxUiPerformance.Duration("Language", languageStarted);
-		if (!portableLinux && !LaunchSettings.BypassUpdateCheck)
+		if (!LaunchSettings.BypassUpdateCheck)
 		{
 			try
 			{
-				await Installer.HandleUpgradeAsync();
+				if (portableLinux)
+					await Installer.HandleLinuxUpgradeAsync();
+				else
+					await Installer.HandleUpgradeAsync();
 			}
 			catch (Exception ex)
 			{
@@ -1569,9 +1585,11 @@ public partial class App : Application
 		int renderTier = RenderCapability.Tier >> 16;
 		bool environmentSoftware = Environment.GetEnvironmentVariable("LIBGL_ALWAYS_SOFTWARE") == "1";
 		string renderMode = Settings.Prop.WPFSoftwareRender || LaunchSettings.NoGPUFlag.Active || environmentSoftware ? "software" : renderTier == 0 ? "software, GPU tier 0" : "hardware";
-		Logger.WriteLine("App::OnStartup", $"WPF render tier {renderTier}, rendering mode: {renderMode}");
+		if (!Voidstrap.Utility.Platform.IsLinux)
+			Logger.WriteLine("App::OnStartup", $"WPF render tier {renderTier}, rendering mode: {renderMode}");
 		if (Voidstrap.Utility.Platform.IsLinux)
 		{
+			Logger.WriteLine("App::OnStartup", "Rendering through ProGPU on WebGPU, the adapter is logged once the first window has a GPU device");
 			Logger.WriteLine("App::OnStartup", "Linux session: " + (Environment.GetEnvironmentVariable("XDG_SESSION_TYPE") ?? "unknown")
 				+ ", windowing: " + (Environment.GetEnvironmentVariable("PROGPU_WPF_LINUX_WINDOWING") ?? "auto")
 				+ ", renderer stage: " + (Environment.GetEnvironmentVariable("VOIDSTRAP_GPU_RETRY") ?? "default")
@@ -1588,13 +1606,70 @@ public partial class App : Application
 			RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.Linear);
 	}
 
+	private const double LinuxToolTipCursorHeight = 20.0;
+
+	private sealed class LinuxToolTipAnchor
+	{
+		public double HorizontalOffset;
+		public double VerticalOffset;
+		public bool AtCursorPoint;
+	}
+
+	private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<DependencyObject, LinuxToolTipAnchor> LinuxToolTipAnchors = new();
+
 	private static void ApplyLinuxToolTipPlacement(object sender, System.Windows.Controls.ToolTipEventArgs e)
 	{
 		if (sender is not DependencyObject owner)
 			return;
 		System.Windows.Controls.Primitives.PlacementMode placement = System.Windows.Controls.ToolTipService.GetPlacement(owner);
-		if (placement is System.Windows.Controls.Primitives.PlacementMode.Mouse or System.Windows.Controls.Primitives.PlacementMode.MousePoint)
+		if (!LinuxToolTipAnchors.TryGetValue(owner, out LinuxToolTipAnchor? anchor))
+		{
+			if (placement is not (System.Windows.Controls.Primitives.PlacementMode.Mouse or System.Windows.Controls.Primitives.PlacementMode.MousePoint))
+				return;
+			anchor = new LinuxToolTipAnchor
+			{
+				HorizontalOffset = System.Windows.Controls.ToolTipService.GetHorizontalOffset(owner),
+				VerticalOffset = System.Windows.Controls.ToolTipService.GetVerticalOffset(owner),
+				AtCursorPoint = placement == System.Windows.Controls.Primitives.PlacementMode.MousePoint
+			};
+			LinuxToolTipAnchors.Add(owner, anchor);
+		}
+		else if (placement != System.Windows.Controls.Primitives.PlacementMode.Bottom)
+		{
+			LinuxToolTipAnchors.Remove(owner);
+			return;
+		}
+
+		UIElement? target = owner as UIElement ?? FindToolTipHost(owner);
+		if (target is null || !target.IsVisible)
+		{
 			System.Windows.Controls.ToolTipService.SetPlacement(owner, System.Windows.Controls.Primitives.PlacementMode.Bottom);
+			LinuxToolTipAnchors.Remove(owner);
+			return;
+		}
+
+		Point cursor = System.Windows.Input.Mouse.GetPosition(target);
+		if (double.IsNaN(cursor.X) || double.IsNaN(cursor.Y))
+			return;
+
+		System.Windows.Controls.ToolTipService.SetPlacement(owner, System.Windows.Controls.Primitives.PlacementMode.Bottom);
+		if (!ReferenceEquals(target, owner))
+			System.Windows.Controls.ToolTipService.SetPlacementTarget(owner, target);
+		System.Windows.Controls.ToolTipService.SetPlacementRectangle(owner, new Rect(cursor.X, cursor.Y, 1.0, anchor.AtCursorPoint ? 1.0 : LinuxToolTipCursorHeight));
+		System.Windows.Controls.ToolTipService.SetHorizontalOffset(owner, anchor.HorizontalOffset);
+		System.Windows.Controls.ToolTipService.SetVerticalOffset(owner, anchor.VerticalOffset);
+	}
+
+	private static UIElement? FindToolTipHost(DependencyObject element)
+	{
+		DependencyObject? current = element;
+		for (int depth = 0; current is not null && depth < 32; depth++)
+		{
+			if (current is UIElement host)
+				return host;
+			current = current is FrameworkContentElement content ? content.Parent : LogicalTreeHelper.GetParent(current);
+		}
+		return null;
 	}
 
 	private static void InitializeLanguage()

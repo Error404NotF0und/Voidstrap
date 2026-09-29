@@ -313,7 +313,7 @@ public class LibraryViewModel : INotifyPropertyChanged
         SelectGameCommand = new RelayCommand<LibraryGameEntry>(SelectGame);
         OpenEventCommand = new RelayCommand<LibraryEventEntry>(OpenEvent);
         GoHomeCommand = new RelayCommand(GoHome);
-        LaunchCommand = new RelayCommand<LibraryGameEntry>(LaunchGame);
+        LaunchCommand = new AsyncRelayCommand<LibraryGameEntry>(LaunchGameAsync);
         TogglePinCommand = new RelayCommand<LibraryGameEntry>(TogglePin);
         AddGameCommand = new AsyncRelayCommand(AddGameFromTextAsync);
         RefreshCommand = new RelayCommand(Refresh);
@@ -1354,13 +1354,16 @@ public class LibraryViewModel : INotifyPropertyChanged
         _ = LoadAsync(true);
     }
 
-    private void LaunchGame(LibraryGameEntry? game)
+    private async Task LaunchGameAsync(LibraryGameEntry? game)
     {
-        if (game == null || game.PlaceId == 0)
+        if (game == null || (game.PlaceId == 0 && game.UniverseId == 0))
+            return;
+        long placeId = await ResolveStartPlaceAsync(game);
+        if (placeId == 0)
             return;
         try
         {
-            string uri = $"roblox://experiences/start?placeId={game.PlaceId}";
+            string uri = $"roblox://experiences/start?placeId={placeId}";
             string voidstrapPath = Paths.LaunchExecutable;
             Process.Start(new ProcessStartInfo
             {
@@ -1376,6 +1379,31 @@ public class LibraryViewModel : INotifyPropertyChanged
         {
             App.Logger.WriteException("LibraryViewModel::LaunchGame", ex);
         }
+    }
+
+    private static async Task<long> ResolveStartPlaceAsync(LibraryGameEntry game)
+    {
+        if (game.UniverseId <= 0)
+            return game.PlaceId;
+        UniverseDetails? details = UniverseDetails.LoadFromCache(game.UniverseId);
+        if (details?.Data == null)
+        {
+            try
+            {
+                await UniverseDetails.FetchSingle(game.UniverseId);
+            }
+            catch (Exception ex)
+            {
+                App.Logger.WriteException("LibraryViewModel::ResolveStartPlace", ex);
+            }
+            details = UniverseDetails.LoadFromCache(game.UniverseId);
+        }
+        long rootPlaceId = details?.Data?.RootPlaceId ?? 0;
+        if (rootPlaceId <= 0)
+            return game.PlaceId;
+        if (rootPlaceId != game.PlaceId)
+            App.Logger.WriteLine("LibraryViewModel::LaunchGame", $"Joining the start place {rootPlaceId} of universe {game.UniverseId} instead of the last visited place {game.PlaceId}");
+        return rootPlaceId;
     }
 
     private void TogglePin(LibraryGameEntry? game)

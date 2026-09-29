@@ -515,10 +515,21 @@ public partial class MenuContainer : WpfUiWindow
 
     private static readonly TimeSpan NotificationEnrichTimeout = TimeSpan.FromSeconds(8);
 
+    private static string CompactServerLocation(string location)
+    {
+        string[] parts = location.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return parts.Length >= 3 ? parts[0] + ", " + parts[^1] : location;
+    }
+
     private async Task ShowJoinNotification(ActivityData data, Task<(string Name, BitmapSource? Icon)> presentationTask, CancellationToken token)
     {
         if (!App.Settings.Prop.NotificationWindowShow || _activityWatcher == null)
         {
+            return;
+        }
+        if (Voidstrap.Utility.Platform.IsLinux && Voidstrap.Platform.Linux.SoberNativeSettings.IsServerLocationIndicatorEnabled())
+        {
+            App.Logger.WriteLine("MenuContainer::ShowJoinNotification", "Sober shows its own server location notice, skipping the join notification");
             return;
         }
         Task<string?> locationTask = data.QueryServerLocation(token);
@@ -584,7 +595,7 @@ public partial class MenuContainer : WpfUiWindow
 		}
         if (!IsCurrentSession(data, token))
             return;
-        string text2 = tuple.Item2 > 0
+        string text2 = tuple.Item1 > 0 && tuple.Item2 > 0
             ? $" • {tuple.Item1}/{tuple.Item2} players"
             : tuple.Item1 == 1
                 ? " • 1 player"
@@ -605,6 +616,8 @@ public partial class MenuContainer : WpfUiWindow
         {
             App.Logger.WriteLine("MenuContainer::ShowJoinNotification", "Flag lookup failed: " + ex.Message);
         }
+        if (Voidstrap.Utility.Platform.IsLinux && text2.Length > 0)
+            serverLocation = CompactServerLocation(serverLocation);
         string text3 = universeName + "\n" + (flagImage != null ? NotificationWindow.FlagPlaceholder.ToString() : string.Empty) + serverLocation + text2;
         try
         {
@@ -655,7 +668,7 @@ public partial class MenuContainer : WpfUiWindow
 			bool trace = ActivityWatcher.PlayerLoggingEnabled;
 			OutputConsoleMenuItem.Visibility = trace ? Visibility.Visible : Visibility.Collapsed;
             BrightnessTrackerLog.Visibility = App.Settings.Prop.OverlaysEnabled ? Visibility.Visible : Visibility.Collapsed;
-            ColorsTrackerLog.Visibility = BrightnessTrackerLog.Visibility;
+            ColorsTrackerLog.Visibility = Voidstrap.Utility.Platform.IsLinux ? Visibility.Collapsed : BrightnessTrackerLog.Visibility;
         }
         catch (OperationCanceledException)
         {
@@ -874,6 +887,8 @@ public partial class MenuContainer : WpfUiWindow
         {
             try
             {
+                (DataContext as MenuContainerViewModel)?.SyncAdjustmentsFromSettings();
+
                 if (_adjustmentsWindow is null || !_adjustmentsWindow.IsLoaded)
                 {
                     _adjustmentsWindow = new LinuxAdjustmentsWindow(DataContext);

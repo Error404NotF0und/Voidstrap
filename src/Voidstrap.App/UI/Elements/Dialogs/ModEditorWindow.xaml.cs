@@ -427,6 +427,10 @@ internal sealed class ModSlotOptionRow : NotifyPropertyChangedViewModel
 		{
 			return null;
 		}
+		if (!Voidstrap.Utility.Platform.IsWindows)
+		{
+			return Voidstrap.Utility.SafeImaging.FromFile(path, 96);
+		}
 		try
 		{
 			BitmapImage image = new BitmapImage();

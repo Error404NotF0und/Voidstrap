@@ -1426,7 +1426,9 @@ public class Bootstrapper
                     && !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DISPLAY"));
                 if (LinuxSoberRuntimeProvider.ForceX11Session)
                 {
-                    App.Logger.WriteLine("Bootstrapper::TryLaunchNonWindowsClient", "Window controls or effects are on, starting Sober on X11 so Voidstrap can control its window");
+                    App.Logger.WriteLine("Bootstrapper::TryLaunchNonWindowsClient", Voidstrap.Integrations.Overlays.OverlaySettings.LinuxCustomCursorNeedsX11
+                        ? "Window controls, effects or a custom cursor are on, starting Sober on X11 because Sober only draws Roblox cursor textures there"
+                        : "Window controls or effects are on, starting Sober on X11 so Voidstrap can control its window");
                 }
 
                 LinuxRuntimeConfiguration configuration = LinuxRuntimeConfiguration.CreateDefault(Paths.Mods, host.Processes);
@@ -4135,6 +4137,7 @@ public class Bootstrapper
         }
 
         RepairFlattenedModNames();
+        RepairModRootCase();
         try
         {
             CursorManager.ApplyOnLaunch();
@@ -4204,6 +4207,48 @@ public class Bootstrapper
         catch (Exception ex)
         {
             App.Logger.WriteLine(logIdent, "The generated UI mod could not be refreshed: " + ex.Message);
+        }
+    }
+
+    private static readonly string[] CanonicalModRoots = ["content", "ExtraContent", "PlatformContent"];
+
+    internal static void RepairModRootCase()
+    {
+        if (Path.DirectorySeparatorChar == '\\' || !Directory.Exists(Paths.Mods))
+        {
+            return;
+        }
+
+        foreach (string directory in Directory.EnumerateDirectories(Paths.Mods))
+        {
+            string name = Path.GetFileName(directory);
+            string? canonical = CanonicalModRoots.FirstOrDefault(root => string.Equals(root, name, StringComparison.OrdinalIgnoreCase));
+            if (canonical == null || string.Equals(canonical, name, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            string target = Path.Combine(Paths.Mods, canonical);
+            try
+            {
+                foreach (string file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+                {
+                    string destination = Path.Combine(target, Path.GetRelativePath(directory, file));
+                    if (File.Exists(destination) && File.GetLastWriteTimeUtc(destination) >= File.GetLastWriteTimeUtc(file))
+                    {
+                        File.Delete(file);
+                        continue;
+                    }
+                    Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                    File.Move(file, destination, true);
+                }
+                Directory.Delete(directory, true);
+                App.Logger.WriteLine("Bootstrapper::RepairModRootCase", "Moved the " + name + " mod folder into " + canonical);
+            }
+            catch (Exception ex)
+            {
+                App.Logger.WriteLine("Bootstrapper::RepairModRootCase", "Could not move the " + name + " mod folder: " + ex.Message);
+            }
         }
     }
 
@@ -5324,6 +5369,11 @@ public class Bootstrapper
                 App.Logger.WriteLine("Bootstrapper::RestoreStoragePatches", "The skybox storage patch could not be reapplied: " + ex.Message);
             }
         }
+        ReapplyAssetCacheMods();
+    }
+
+    internal static void ReapplyAssetCacheMods()
+    {
         try
         {
             foreach (string folder in ManagedModStore.EnabledFoldersByPriority().Reverse())

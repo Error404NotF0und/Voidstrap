@@ -92,7 +92,10 @@ internal static class ModAutoFixer
 		{
 			App.Logger?.WriteLine(LogIdent, "The managed mod folders could not be listed: " + ex.Message);
 		}
-		RepairModLayout(robloxFolder, folders);
+		if (!Voidstrap.Utility.Platform.IsLinux)
+		{
+			RepairModLayout(robloxFolder, folders);
+		}
 		int faces = ConvertSkyFaces(folders);
 		if (faces > 0)
 		{
@@ -105,12 +108,12 @@ internal static class ModAutoFixer
 		int converted = 0;
 		foreach (string modFolder in modFolders)
 		{
-			string sky = Path.Combine(modFolder, SkyFolder);
-			if (!Directory.Exists(sky))
+			string? sky = FindFolder(modFolder, SkyFolder);
+			if (sky == null)
 			{
 				continue;
 			}
-			foreach (string file in Directory.EnumerateFiles(sky, "*.tex"))
+			foreach (string file in Directory.EnumerateFiles(sky, "*.tex", new EnumerationOptions { MatchCasing = MatchCasing.CaseInsensitive }))
 			{
 				try
 				{
@@ -134,6 +137,34 @@ internal static class ModAutoFixer
 			}
 		}
 		return converted;
+	}
+
+	private static string? FindFolder(string root, string relative)
+	{
+		string current = root;
+		foreach (string segment in relative.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+		{
+			string candidate = Path.Combine(current, segment);
+			if (Directory.Exists(candidate))
+			{
+				current = candidate;
+				continue;
+			}
+			if (!Directory.Exists(current))
+			{
+				return null;
+			}
+			string? match = Directory.EnumerateDirectories(current)
+				.Where(folder => string.Equals(Path.GetFileName(folder), segment, StringComparison.OrdinalIgnoreCase))
+				.Order(StringComparer.Ordinal)
+				.FirstOrDefault();
+			if (match == null)
+			{
+				return null;
+			}
+			current = match;
+		}
+		return Directory.Exists(current) ? current : null;
 	}
 
 	private static bool NeedsSkyConversion(string path)

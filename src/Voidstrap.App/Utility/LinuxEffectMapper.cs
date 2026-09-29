@@ -25,8 +25,6 @@ internal static class LinuxEffectMapper
 
 		int soberSharpness = Math.Clamp(App.Settings.Prop.SoberSharpness, 0, 100);
 		bool soberSharpen = soberSharpness > 0;
-		bool liveColor = LinuxSoberRuntimeProvider.UseCompositor;
-		bool colorGrade = !liveColor && HasLiveColorEffect();
 		bool shadeSharpen = shadeOn && shade.SharpenEnabled;
 		HomepageMedia? homepageMedia = ResolveHomepageMedia();
 		string? homepageShader = BuildHomepageShader(homepageMedia);
@@ -36,12 +34,12 @@ internal static class LinuxEffectMapper
 			: shadeSharpen ? Math.Clamp(shade.SharpenStrength, 0f, 1f) : 0.4f;
 
 		return new LinuxEffectOptions(
-			Enabled: shadeOn || colorGrade || soberSharpen || MapAntiAliasing() is not null || MapFrameGenMultiplier() > 1 || homepageShader is not null,
+			Enabled: shadeOn || soberSharpen || MapAntiAliasing() is not null || MapFrameGenMultiplier() > 1 || homepageShader is not null,
 			AntiAliasing: MapAntiAliasing(),
 			AntiAliasingUltra: AntiAliasingSettings.MethodIndex is 2 or 4,
 			Sharpening: shadeSharpen || soberSharpen,
 			SharpnessAmount: sharpnessAmount,
-			GradingShader: shadeOn || colorGrade ? BuildGradingShader(shade, !liveColor) : null,
+			GradingShader: shadeOn ? BuildGradingShader(shade) : null,
 			HomepageShader: homepageShader,
 			HomepageMediaPath: homepageMedia?.Path,
 			FrameGenMultiplier: MapFrameGenMultiplier());
@@ -115,9 +113,16 @@ internal static class LinuxEffectMapper
 		shader.AppendLine("{");
 		shader.AppendLine("    Width = 1;");
 		shader.AppendLine("    Height = 1;");
-		shader.AppendLine("    Format = R8;");
+		shader.AppendLine("    Format = R16F;");
 		shader.AppendLine("};");
 		shader.AppendLine("sampler VoidstrapHomepageState { Texture = VoidstrapHomepageStateTex; MinFilter = POINT; MagFilter = POINT; AddressU = CLAMP; AddressV = CLAMP; };");
+		shader.AppendLine("texture VoidstrapHomepageHistoryTex");
+		shader.AppendLine("{");
+		shader.AppendLine("    Width = 1;");
+		shader.AppendLine("    Height = 1;");
+		shader.AppendLine("    Format = R16F;");
+		shader.AppendLine("};");
+		shader.AppendLine("sampler VoidstrapHomepageHistory { Texture = VoidstrapHomepageHistoryTex; MinFilter = POINT; MagFilter = POINT; AddressU = CLAMP; AddressV = CLAMP; };");
 		if (media is not null)
 		{
 			string mediaName = Path.GetFileName(LinuxEffectLayers.HomepageMediaFile(media.Path)).Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
@@ -157,12 +162,21 @@ internal static class LinuxEffectMapper
 		shader.AppendLine("    matches += step(0.90, VoidstrapHomepageWeight(tex2D(VoidstrapHomepageBackBuffer, float2(0.24, 0.89)).rgb));");
 		shader.AppendLine("    matches += step(0.90, VoidstrapHomepageWeight(tex2D(VoidstrapHomepageBackBuffer, float2(0.76, 0.89)).rgb));");
 		shader.AppendLine("    matches += step(0.90, VoidstrapHomepageWeight(tex2D(VoidstrapHomepageBackBuffer, float2(0.96, 0.94)).rgb));");
-		shader.AppendLine("    return step(3.5, matches);");
+		shader.AppendLine("    float previous = tex2D(VoidstrapHomepageHistory, float2(0.5, 0.5)).r;");
+		shader.AppendLine("    if (matches >= 3.5)");
+		shader.AppendLine("        return 1.0;");
+		shader.AppendLine("    if (matches >= 1.5 && previous > 0.0)");
+		shader.AppendLine("        return max(previous - 1.0 / 90.0, 0.0);");
+		shader.AppendLine("    return max(previous - 1.0 / 18.0, 0.0);");
+		shader.AppendLine("}");
+		shader.AppendLine("float VoidstrapHomepageRemember(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target");
+		shader.AppendLine("{");
+		shader.AppendLine("    return tex2D(VoidstrapHomepageState, float2(0.5, 0.5)).r;");
 		shader.AppendLine("}");
 		shader.AppendLine("float3 VoidstrapHomepagePass(float4 pos : SV_Position, float2 texcoord : TEXCOORD) : SV_Target");
 		shader.AppendLine("{");
 		shader.AppendLine("    float3 pixel = tex2D(VoidstrapHomepageBackBuffer, texcoord).rgb;");
-		shader.AppendLine("    if (tex2D(VoidstrapHomepageState, float2(0.5, 0.5)).r < 0.5)");
+		shader.AppendLine("    if (tex2D(VoidstrapHomepageState, float2(0.5, 0.5)).r <= 0.0)");
 		shader.AppendLine("        return pixel;");
 		shader.AppendLine("    float own = VoidstrapHomepageWeight(pixel);");
 		shader.AppendLine("    if (own <= 0.001)");
@@ -199,6 +213,12 @@ internal static class LinuxEffectMapper
 		shader.AppendLine("        VertexShader = VoidstrapHomepageVS;");
 		shader.AppendLine("        PixelShader = VoidstrapHomepageDetect;");
 		shader.AppendLine("        RenderTarget = VoidstrapHomepageStateTex;");
+		shader.AppendLine("    }");
+		shader.AppendLine("    pass VoidstrapHomepageMemory");
+		shader.AppendLine("    {");
+		shader.AppendLine("        VertexShader = VoidstrapHomepageVS;");
+		shader.AppendLine("        PixelShader = VoidstrapHomepageRemember;");
+		shader.AppendLine("        RenderTarget = VoidstrapHomepageHistoryTex;");
 		shader.AppendLine("    }");
 		shader.AppendLine("    pass");
 		shader.AppendLine("    {");
@@ -246,8 +266,6 @@ internal static class LinuxEffectMapper
 		return value.ToString("0.0000", CultureInfo.InvariantCulture);
 	}
 
-	private const float NeutralColorLevel = 100f;
-
 	public static void RefreshConfiguration()
 	{
 		if (!Voidstrap.Utility.Platform.IsLinux)
@@ -268,32 +286,8 @@ internal static class LinuxEffectMapper
 		}
 	}
 
-	public static bool HasLiveColorEffect()
+	private static string BuildGradingShader(RiShadeSettings shade)
 	{
-		return HasColorGrade()
-			|| Math.Abs(App.Settings.Prop.ColorTemperature) > 0.5
-			|| App.Settings.Prop.ColorBlindnessEnabled;
-	}
-
-	public static bool HasColorGrade()
-	{
-		return Math.Abs(App.Settings.Prop.Saturation - NeutralColorLevel) > 0.5
-			|| Math.Abs(App.Settings.Prop.Contrast - NeutralColorLevel) > 0.5;
-	}
-
-	private static string BuildGradingShader(RiShadeSettings shade, bool includeColorLevels)
-	{
-		float[]? colorMatrix = includeColorLevels
-			? ScreenColorEffect.BuildMatrix(
-				App.Settings.Prop.Saturation,
-				App.Settings.Prop.Contrast,
-				App.Settings.Prop.ColorTemperature,
-				App.Settings.Prop.ColorBlindnessEnabled,
-				(ScreenColorEffect.ColorBlindnessType)App.Settings.Prop.ColorBlindnessType,
-				App.Settings.Prop.ColorBlindnessSeverity / 100.0,
-				App.Settings.Prop.ColorBlindnessSimulate)
-			: null;
-
 		float brightness = shade.GradeEnabled ? shade.Brightness : 0f;
 		float gamma = shade.GradeEnabled ? Math.Clamp(shade.Gamma, 0.1f, 5f) : 1f;
 		float[] gain = shade.GradeEnabled ? shade.Gain : [1f, 1f, 1f];
@@ -329,14 +323,6 @@ internal static class LinuxEffectMapper
 			shader.AppendLine("    color = lerp(color, color * falloff, " + F(vignette) + ");");
 		}
 
-		if (colorMatrix is { Length: >= 23 })
-		{
-			shader.AppendLine("    color = saturate(color);");
-			shader.AppendLine("    color = float3(");
-			shader.AppendLine("        dot(color, float3(" + F(colorMatrix[0]) + ", " + F(colorMatrix[5]) + ", " + F(colorMatrix[10]) + ")) + " + F(colorMatrix[20]) + ",");
-			shader.AppendLine("        dot(color, float3(" + F(colorMatrix[1]) + ", " + F(colorMatrix[6]) + ", " + F(colorMatrix[11]) + ")) + " + F(colorMatrix[21]) + ",");
-			shader.AppendLine("        dot(color, float3(" + F(colorMatrix[2]) + ", " + F(colorMatrix[7]) + ", " + F(colorMatrix[12]) + ")) + " + F(colorMatrix[22]) + ");");
-		}
 		shader.AppendLine("    return saturate(color);");
 		shader.AppendLine("}");
 		shader.AppendLine();

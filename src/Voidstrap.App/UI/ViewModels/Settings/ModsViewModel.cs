@@ -522,11 +522,13 @@ public partial class ModsViewModel : NotifyPropertyChangedViewModel
 		catch (OperationCanceledException)
 		{
 			rollback(enabled);
+			App.Settings.Save();
 			ReportClassicTopBar("The change was cancelled.", 1.0, true);
 		}
 		catch (Exception ex)
 		{
 			rollback(enabled);
+			App.Settings.Save();
 			ReportClassicTopBar("It could not be changed: " + ex.Message, 1.0, true);
 			App.Logger.WriteLine("ModsViewModel", "The classic topbar change failed: " + ex.Message);
 		}
@@ -1791,9 +1793,9 @@ public ICommand PickCursorColorCommand { get; }
 
 	public FontModPresetTask TextFontTask { get; } = new FontModPresetTask();
 
-	public Visibility ChooseCustomDeathSoundVisibility => GetVisibility(Path.Combine(Paths.Mods, "Content", "sounds"), DeathSoundFiles, checkExist: false);
+	public Visibility ChooseCustomDeathSoundVisibility => GetVisibility(Path.Combine(Paths.Mods, "content", "sounds"), DeathSoundFiles, checkExist: false);
 
-	public Visibility DeleteCustomDeathSoundVisibility => GetVisibility(Path.Combine(Paths.Mods, "Content", "sounds"), DeathSoundFiles, checkExist: true);
+	public Visibility DeleteCustomDeathSoundVisibility => GetVisibility(Path.Combine(Paths.Mods, "content", "sounds"), DeathSoundFiles, checkExist: true);
 
 	public ObservableCollection<GradientStopViewModel> GradientStops { get; set; } = new ObservableCollection<GradientStopViewModel>();
 
@@ -2885,7 +2887,7 @@ public ICommand PickCursorColorCommand { get; }
 	public void RemoveCustomDeathSound()
 	{
 		CancelDeathSoundConversion();
-        RemoveCustomFile(DeathSoundFiles, Path.Combine(Paths.Mods, "Content", "sounds"), "No custom death sound found to remove.", delegate
+        RemoveCustomFile(DeathSoundFiles, Path.Combine(Paths.Mods, "content", "sounds"), "No custom death sound found to remove.", delegate
 		{
 			try
 			{
@@ -2977,6 +2979,7 @@ public ICommand PickCursorColorCommand { get; }
 
 	public ModsViewModel()
 	{
+		global::Voidstrap.Bootstrapper.RepairModRootCase();
 		_file = Path.Combine(_dir, "crosshair.ini");
 		Paths.TryEnsureDirectory(_dir);
 		try
@@ -4140,7 +4143,11 @@ public ICommand PickCursorColorCommand { get; }
 			}
 			string text2 = Path.GetExtension(SelectedModFile.FullPath).ToLower();
 			string text3 = Path.GetExtension(openFileDialog.FileName).ToLower();
-			if (SelectedModFile.IsImage && text2 != text3)
+			if (SelectedModFile.IsImage && text2 != text3 && !Voidstrap.Utility.Platform.IsWindows)
+			{
+				ConvertReplacementImage(openFileDialog.FileName, text, text2);
+			}
+			else if (SelectedModFile.IsImage && text2 != text3)
 			{
 				using Image image = Image.FromFile(openFileDialog.FileName);
 				ImageFormat imageFormat;
@@ -4174,6 +4181,19 @@ public ICommand PickCursorColorCommand { get; }
 		{
 			Frontend.ShowMessageBox("Failed to replace file: " + ex.Message, MessageBoxImage.Hand);
 		}
+	}
+
+	private static void ConvertReplacementImage(string source, string destination, string extension)
+	{
+		using SixLabors.ImageSharp.Image image = SixLabors.ImageSharp.Image.Load(source);
+		SixLabors.ImageSharp.Formats.IImageEncoder encoder = extension switch
+		{
+			".jpg" or ".jpeg" => new SixLabors.ImageSharp.Formats.Jpeg.JpegEncoder(),
+			".bmp" => new SixLabors.ImageSharp.Formats.Bmp.BmpEncoder(),
+			_ => new SixLabors.ImageSharp.Formats.Png.PngEncoder()
+		};
+		using FileStream stream = File.Create(destination);
+		image.Save(stream, encoder);
 	}
 
 	public void ExportFile()
@@ -4389,17 +4409,9 @@ public ICommand PickCursorColorCommand { get; }
 		{
 			text = Path.GetDirectoryName(text) ?? CurrentExplorerPath;
 		}
-		try
+		if (!Voidstrap.Utility.PlatformShell.TryOpenFolder(text))
 		{
-			Process.Start(new ProcessStartInfo
-			{
-				FileName = text,
-				UseShellExecute = true
-			});
-		}
-		catch (Exception ex)
-		{
-			App.Logger.WriteException("ModsViewModel::OpenModFileFolder", ex);
+			App.Logger.WriteLine("ModsViewModel::OpenModFileFolder", "The folder could not be opened: " + text);
 		}
 	}
 
@@ -4461,18 +4473,7 @@ public ICommand PickCursorColorCommand { get; }
 
 	private static void OpenFolder(string dir)
 	{
-		try
-		{
-			Directory.CreateDirectory(dir);
-			Process.Start(new ProcessStartInfo
-			{
-				FileName = dir,
-				UseShellExecute = true
-			});
-		}
-		catch
-		{
-		}
+		Voidstrap.Utility.PlatformShell.TryOpenFolder(dir);
 	}
 
 	public void StartCaptureBrowser()

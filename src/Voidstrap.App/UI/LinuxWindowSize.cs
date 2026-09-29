@@ -10,6 +10,27 @@ internal static class LinuxWindowSize
 
     private static readonly TimeSpan RetryInterval = TimeSpan.FromMilliseconds(350.0);
 
+    public static void RespectLimits(Window window)
+    {
+        Clamp(window, FrameworkElement.WidthProperty, window.MinWidth, window.MaxWidth);
+        Clamp(window, FrameworkElement.HeightProperty, window.MinHeight, window.MaxHeight);
+    }
+
+    private static void Clamp(Window window, DependencyProperty property, double min, double max)
+    {
+        double value = (double)window.GetValue(property);
+        if (!double.IsFinite(value) || value <= 0.0)
+            return;
+
+        double limited = value;
+        if (double.IsFinite(max) && max > 0.0)
+            limited = Math.Min(limited, max);
+        if (double.IsFinite(min) && min > 0.0)
+            limited = Math.Max(limited, min);
+        if (Math.Abs(limited - value) > 0.5)
+            window.SetCurrentValue(property, limited);
+    }
+
     public static void Apply(string title, int width, int height)
     {
         if (!OperatingSystem.IsLinux() || string.IsNullOrWhiteSpace(title) || width <= 0 || height <= 0)

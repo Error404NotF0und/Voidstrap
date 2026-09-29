@@ -39,14 +39,7 @@ internal readonly record struct LinuxHomepageVisualSettings(
 			App.Settings.Prop.HomepageBackgroundOverlayColor ?? string.Empty,
 			App.Settings.Prop.HomepageBackgroundOverlayGradientColor ?? string.Empty,
 			App.Settings.Prop.HomepageBackgroundOverlayGradientAngle,
-			App.Settings.Prop.HomepageBackgroundOverlayMediaPath ?? string.Empty,
-			App.Settings.Prop.Saturation,
-			App.Settings.Prop.Contrast,
-			App.Settings.Prop.ColorTemperature,
-			App.Settings.Prop.ColorBlindnessEnabled,
-			App.Settings.Prop.ColorBlindnessType,
-			App.Settings.Prop.ColorBlindnessSeverity,
-			App.Settings.Prop.ColorBlindnessSimulate);
+			App.Settings.Prop.HomepageBackgroundOverlayMediaPath ?? string.Empty);
 	}
 
 	public HomepageBackgroundColorTransform CreateColorTransform()
@@ -888,6 +881,8 @@ internal sealed class LinuxHomepageBackgroundOverlayRenderer : IDisposable
 {
 	private static int _nextSurfaceId;
 	private const int InactivePollMilliseconds = 83;
+	private const long FocusGraceMilliseconds = 400;
+	private const long MaskGraceMilliseconds = 300;
 	private const int RefreshQueryMilliseconds = 5000;
 	private const int ParkedPosition = -32000;
 	private const int NativeFinalizeMaxAttempts = 50;
@@ -1284,6 +1279,12 @@ internal sealed class LinuxHomepageBackgroundOverlayRenderer : IDisposable
 		int surfaceTop = 0;
 		int surfaceWidth = 0;
 		int surfaceHeight = 0;
+		int lastSurfaceLeft = 0;
+		int lastSurfaceTop = 0;
+		int lastSurfaceWidth = 0;
+		int lastSurfaceHeight = 0;
+		long focusLostAt = 0;
+		long maskLostAt = 0;
 		double targetRefreshHz = 60d;
 		long nextRefreshQuery = 0;
 		long nextPerformanceReport = Environment.TickCount64 + 10_000;
@@ -1316,9 +1317,31 @@ internal sealed class LinuxHomepageBackgroundOverlayRenderer : IDisposable
 					compositorAvailable = LinuxWindowInterop.HasActiveX11Compositor;
 					nextCompositorCheck = now + 2000;
 				}
-				surfaceActive = compositorAvailable
-					&& OverlayHub.HomepageBackgroundActive
+				bool hubActive = compositorAvailable && OverlayHub.HomepageBackgroundActive;
+				bool focusedGeometry = hubActive
 					&& TryResolveFocusedGeometry(sourceWindow, out surfaceLeft, out surfaceTop, out surfaceWidth, out surfaceHeight);
+				if (focusedGeometry)
+				{
+					focusLostAt = 0;
+					lastSurfaceLeft = surfaceLeft;
+					lastSurfaceTop = surfaceTop;
+					lastSurfaceWidth = surfaceWidth;
+					lastSurfaceHeight = surfaceHeight;
+				}
+				else if (hubActive && surfaceVisible && sourceWindow.Valid && lastSurfaceWidth > 0 && lastSurfaceHeight > 0)
+				{
+					if (focusLostAt == 0)
+						focusLostAt = now;
+					if (now - focusLostAt < FocusGraceMilliseconds)
+					{
+						surfaceLeft = lastSurfaceLeft;
+						surfaceTop = lastSurfaceTop;
+						surfaceWidth = lastSurfaceWidth;
+						surfaceHeight = lastSurfaceHeight;
+						focusedGeometry = true;
+					}
+				}
+				surfaceActive = focusedGeometry;
 				if (!compositorAvailable)
 				{
 					if (Interlocked.Exchange(ref _compositorFailureLogged, 1) == 0)
@@ -1538,8 +1561,21 @@ internal sealed class LinuxHomepageBackgroundOverlayRenderer : IDisposable
 						App.Logger.WriteLine("LinuxHomepageBackground", "Sober pixels could not be captured, the overlay will stay transparent until capture recovers");
 				}
 
+				if (!hasFreshMask && surfaceVisible)
+				{
+					if (maskLostAt == 0)
+						maskLostAt = now;
+					if (now - maskLostAt < MaskGraceMilliseconds)
+					{
+						await DelayForRefreshAsync(frameStarted, targetRefreshHz, token).ConfigureAwait(false);
+						continue;
+					}
+				}
+				if (hasFreshMask)
+					maskLostAt = 0;
 				if (!hasFreshMask)
 				{
+					maskLostAt = 0;
 					if (surfaceVisible)
 					{
 						await SetSurfaceVisibilityAsync(false, token).ConfigureAwait(false);

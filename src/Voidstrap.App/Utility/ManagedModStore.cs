@@ -328,7 +328,7 @@ internal static class ManagedModStore
 					{
 						if (ModAutoFixer.IsIgnoredModFile(file.Relative))
 							result.IgnoredSkipped++;
-						else if (claimed.Add(file.Relative))
+						else if (claimed.Add(file.Relative.Replace('\\', '/')))
 							result.Files.Add(file);
 					}
 					result.SuccessfulModIds.Add(record.Id);

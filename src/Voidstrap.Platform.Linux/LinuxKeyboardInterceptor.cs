@@ -49,7 +49,9 @@ public sealed unsafe partial class LinuxKeyboardInterceptor : IDisposable
 	private const int NoDevice = 19;
 	private const int Interrupted = 4;
 	private const long ScanIntervalMs = 2000;
-	private const long FocusIntervalMs = 150;
+	private const int FocusPollMs = 50;
+	private const int EngagePollMs = 50;
+	private const int IdlePollMs = 250;
 	private const long OwnershipRetryMs = 2000;
 
 	private const nuint EviocGrab = 0x40044590;
@@ -77,9 +79,14 @@ public sealed unsafe partial class LinuxKeyboardInterceptor : IDisposable
 	private readonly List<LinuxKeyEvent> _pending = new(32);
 	private readonly bool[] _emitted = new bool[MaxKeyCode + 1];
 	private readonly byte[] _eventBuffer = new byte[EventSize * 64];
+	private readonly byte[] _ledBuffer = new byte[EventSize * 16];
+	private readonly Dictionary<string, DateTime> _ignoredNodes = new(StringComparer.Ordinal);
 	private readonly object _gate = new();
 	private Thread? _thread;
+	private Thread? _focusThread;
 	private volatile bool _stopping;
+	private volatile bool _targetFocused;
+	private System.Runtime.GCLatencyMode? _latencyBefore;
 	private int _wakeRead = -1;
 	private int _wakeWrite = -1;
 	private int _uinput = -1;
@@ -178,7 +185,13 @@ public sealed unsafe partial class LinuxKeyboardInterceptor : IDisposable
 				Name = "Voidstrap Snap Tap",
 				Priority = ThreadPriority.Highest
 			};
+			_focusThread = new Thread(WatchFocus)
+			{
+				IsBackground = true,
+				Name = "Voidstrap Snap Tap focus"
+			};
 			_thread.Start();
+			_focusThread.Start();
 			return true;
 		}
 	}
@@ -186,10 +199,13 @@ public sealed unsafe partial class LinuxKeyboardInterceptor : IDisposable
 	public void Dispose()
 	{
 		Thread? thread;
+		Thread? focusThread;
 		lock (_gate)
 		{
 			thread = _thread;
+			focusThread = _focusThread;
 			_thread = null;
+			_focusThread = null;
 			_stopping = true;
 		}
 		if (thread == null)
@@ -197,6 +213,8 @@ public sealed unsafe partial class LinuxKeyboardInterceptor : IDisposable
 		Wake();
 		if (!thread.Join(2000))
 			Log("Snap Tap input thread did not stop in time");
+		if (focusThread != null && !focusThread.Join(2000))
+			Log("Snap Tap focus watcher did not stop in time");
 		CloseDescriptor(ref _wakeRead);
 		CloseDescriptor(ref _wakeWrite);
 	}
@@ -280,10 +298,31 @@ public sealed unsafe partial class LinuxKeyboardInterceptor : IDisposable
 		return true;
 	}
 
+	private void WatchFocus()
+	{
+		while (!_stopping)
+		{
+			bool focused;
+			try
+			{
+				focused = _router.IsTargetFocused();
+			}
+			catch (Exception)
+			{
+				focused = false;
+			}
+			if (focused != _targetFocused)
+			{
+				_targetFocused = focused;
+				Wake();
+			}
+			Thread.Sleep(FocusPollMs);
+		}
+	}
+
 	private void Loop()
 	{
 		long nextScan = 0;
-		long nextFocus = 0;
 		PollDescriptor* descriptors = stackalloc PollDescriptor[64];
 		string[] paths = new string[64];
 		while (!_stopping)
@@ -294,11 +333,7 @@ public sealed unsafe partial class LinuxKeyboardInterceptor : IDisposable
 				nextScan = now + ScanIntervalMs;
 				ScanDevices();
 			}
-			if (now >= nextFocus)
-			{
-				nextFocus = now + FocusIntervalMs;
-				UpdateFocus();
-			}
+			UpdateFocus();
 
 			int count = 0;
 			descriptors[count++] = new PollDescriptor { Descriptor = _wakeRead, Events = PollIn };
@@ -311,7 +346,8 @@ public sealed unsafe partial class LinuxKeyboardInterceptor : IDisposable
 				descriptors[count++] = new PollDescriptor { Descriptor = device.Descriptor, Events = PollIn };
 			}
 
-			int ready = poll(descriptors, (nuint)count, (int)FocusIntervalMs);
+			int timeout = _focused && !_grabbed ? EngagePollMs : IdlePollMs;
+			int ready = poll(descriptors, (nuint)count, timeout);
 			if (ready < 0)
 			{
 				if (Marshal.GetLastPInvokeError() == Interrupted)
@@ -337,15 +373,7 @@ public sealed unsafe partial class LinuxKeyboardInterceptor : IDisposable
 
 	private void UpdateFocus()
 	{
-		bool focused;
-		try
-		{
-			focused = _router.IsTargetFocused();
-		}
-		catch (Exception)
-		{
-			focused = false;
-		}
+		bool focused = _targetFocused;
 		if (focused != _focused)
 		{
 			_focused = focused;
@@ -373,6 +401,7 @@ public sealed unsafe partial class LinuxKeyboardInterceptor : IDisposable
 		_grabbed = grab && grabbed > 0;
 		_router.Reset();
 		Array.Clear(_emitted);
+		SetLowLatency(_grabbed);
 		if (grab && grabbed == 0)
 		{
 			_grabRetryAt = Environment.TickCount64 + ScanIntervalMs;
@@ -387,6 +416,38 @@ public sealed unsafe partial class LinuxKeyboardInterceptor : IDisposable
 		Log(grab ? "Keyboard taken over for Snap Tap on " + grabbed.ToString(CultureInfo.InvariantCulture) + " device(s)" : "Keyboard handed back to the desktop");
 	}
 
+	private void SetLowLatency(bool enabled)
+	{
+		try
+		{
+			if (enabled)
+			{
+				_latencyBefore ??= System.Runtime.GCSettings.LatencyMode;
+				System.Runtime.GCSettings.LatencyMode = System.Runtime.GCLatencyMode.SustainedLowLatency;
+			}
+			else if (_latencyBefore is { } previous)
+			{
+				System.Runtime.GCSettings.LatencyMode = previous;
+				_latencyBefore = null;
+			}
+		}
+		catch (Exception)
+		{
+		}
+	}
+
+	private static DateTime NodeStamp(string path)
+	{
+		try
+		{
+			return File.GetLastWriteTimeUtc(path);
+		}
+		catch (Exception)
+		{
+			return DateTime.MinValue;
+		}
+	}
+
 	private void ScanDevices()
 	{
 		HashSet<string> present = new(StringComparer.Ordinal);
@@ -394,6 +455,9 @@ public sealed unsafe partial class LinuxKeyboardInterceptor : IDisposable
 		{
 			present.Add(path);
 			if (_devices.ContainsKey(path))
+				continue;
+			DateTime stamp = NodeStamp(path);
+			if (_ignoredNodes.TryGetValue(path, out DateTime ignoredStamp) && ignoredStamp == stamp)
 				continue;
 			bool writable = true;
 			int descriptor = open(path, OpenReadWrite | OpenNonBlocking | OpenCloseOnExec, 0);
@@ -408,8 +472,10 @@ public sealed unsafe partial class LinuxKeyboardInterceptor : IDisposable
 			if (name == VirtualDeviceName || !IsKeyboard(descriptor) || !_deviceFilter(name))
 			{
 				_ = close(descriptor);
+				_ignoredNodes[path] = stamp;
 				continue;
 			}
+			_ignoredNodes.Remove(path);
 			Device device = new(path, name, descriptor) { Writable = writable };
 			_devices[path] = device;
 			if (_grabbed)
@@ -425,6 +491,8 @@ public sealed unsafe partial class LinuxKeyboardInterceptor : IDisposable
 
 		foreach (string path in _devices.Keys.Where(path => !present.Contains(path)).ToList())
 			RemoveDevice(path);
+		foreach (string path in _ignoredNodes.Keys.Where(path => !present.Contains(path)).ToList())
+			_ignoredNodes.Remove(path);
 	}
 
 	private void RemoveDevice(string path)
@@ -546,7 +614,7 @@ public sealed unsafe partial class LinuxKeyboardInterceptor : IDisposable
 
 	private void ForwardLeds()
 	{
-		byte[] buffer = new byte[EventSize * 16];
+		byte[] buffer = _ledBuffer;
 		byte* message = stackalloc byte[EventSize * 2];
 		while (true)
 		{
@@ -640,6 +708,7 @@ public sealed unsafe partial class LinuxKeyboardInterceptor : IDisposable
 			_ = close(device.Descriptor);
 		}
 		_devices.Clear();
+		SetLowLatency(false);
 		if (_uinput >= 0)
 		{
 			_ = ioctl(_uinput, UiDeviceDestroy, 0);

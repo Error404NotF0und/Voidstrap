@@ -160,7 +160,7 @@ public static class LinuxEffectLayers
 			builder.AppendLine("effects = " + (effects.Count == 0 ? "" : string.Join(":", effects)));
 			builder.AppendLine("enableOnLaunch = True");
 			builder.AppendLine("depthCapture = off");
-			builder.AppendLine("toggleKey = Home");
+			builder.AppendLine("toggleKey = Scroll_Lock");
 			builder.AppendLine("reshadeIncludePath = " + ConfigDirectory);
 			builder.AppendLine("reshadeTexturePath = " + ConfigDirectory);
 			builder.AppendLine("casSharpness = " + options.SharpnessAmount.ToString("0.00", CultureInfo.InvariantCulture));

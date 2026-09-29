@@ -40,6 +40,7 @@ final class AppPresence {
     private static String lastSignature = "";
     private static JSONObject avatar;
     private static long avatarFor;
+    private static boolean avatarLoading;
 
     private AppPresence() {
     }
@@ -132,6 +133,7 @@ final class AppPresence {
         JSONObject args = Core.args("scene", ctx != null, "details", info[0], "state", info[1], "version", BuildConfig.VERSION_NAME, "start", sessionStart);
         if (ctx != null) args = Core.merge(args, Core.args("image", ctx.image, "imageText", ctx.imageText, "buttonLabel", ctx.buttonLabel, "buttonUrl", ctx.buttonUrl));
         if (avatar != null) args = Core.merge(args, Core.args("avatar", avatar));
+        else if (avatarLoading) args = Core.merge(args, Core.args("loading", true));
         return Integrations.presence("presence.app", args);
     }
 
@@ -140,11 +142,12 @@ final class AppPresence {
         long userId = saved.matches("[0-9]{1,18}") ? Long.parseLong(saved) : 0;
         if (userId <= 0 || userId == avatarFor) return;
         avatarFor = userId;
+        avatarLoading = true;
         s.work.execute(() -> {
             JSONObject found = Integrations.account(app, userId, true);
-            if (found == null) return;
             s.main.post(() -> {
-                avatar = found;
+                avatarLoading = false;
+                if (found != null) avatar = found;
                 lastSignature = "";
                 update();
             });

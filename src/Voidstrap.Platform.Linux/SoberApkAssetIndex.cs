@@ -34,6 +34,7 @@ public sealed class SoberApkAssetIndex
 {
 	private const string PlatformContentRoot = "PlatformContent/";
 	private const string AndroidPlatformRoot = "android";
+	private const int MinimumSharedTailSegments = 3;
 	private static readonly string[][] InterchangeableExtensions =
 	[
 		[".dds", ".ktx", ".tex", ".png"],
@@ -42,6 +43,7 @@ public sealed class SoberApkAssetIndex
 
 	private readonly Dictionary<string, string> _canonicalPaths;
 	private readonly Dictionary<string, List<string>> _byFileName;
+	private readonly Dictionary<string, string> _directories;
 	private readonly List<string> _platformSegments;
 
 	internal SoberApkAssetIndex(string packageFile, string packageSha256, IEnumerable<string> canonicalPaths)
@@ -50,6 +52,7 @@ public sealed class SoberApkAssetIndex
 		PackageSha256 = packageSha256;
 		_canonicalPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 		_byFileName = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+		_directories = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 		HashSet<string> platformSegments = new(StringComparer.OrdinalIgnoreCase);
 		foreach (string path in canonicalPaths)
 		{
@@ -66,6 +69,9 @@ public sealed class SoberApkAssetIndex
 				_byFileName[fileName] = bucket;
 			}
 			bucket.Add(normalized.Value);
+
+			for (int separator = normalized.Value.IndexOf('/'); separator > 0; separator = normalized.Value.IndexOf('/', separator + 1))
+				_directories.TryAdd(normalized.Value[..separator], normalized.Value[..separator]);
 
 			if (normalized.Value.StartsWith(PlatformContentRoot, StringComparison.OrdinalIgnoreCase))
 			{
@@ -98,6 +104,33 @@ public sealed class SoberApkAssetIndex
 		return remapped is null
 			? OperationResult<string>.Fail("SoberAssetNotInPackage", "The modification does not match an asset in the installed Sober Roblox package")
 			: OperationResult<string>.Success(remapped);
+	}
+
+	public string CanonicalizeAdditivePath(string logicalPath)
+	{
+		OperationResult<string> normalized = Normalize(logicalPath);
+		if (!normalized.Succeeded || normalized.Value is null)
+			return logicalPath;
+
+		List<string> segments = [.. normalized.Value.Split('/')];
+		if (segments.Count > 2 && string.Equals(segments[0], PlatformContentRoot.TrimEnd('/'), StringComparison.OrdinalIgnoreCase))
+			segments = [AndroidPlatformRoot, .. segments.Skip(2)];
+
+		string prefix = string.Empty;
+		for (int index = 0; index < segments.Count - 1; index++)
+		{
+			string candidate = prefix.Length == 0 ? segments[index] : prefix + "/" + segments[index];
+			if (_directories.TryGetValue(candidate, out string? canonical))
+			{
+				segments[index] = canonical[(canonical.LastIndexOf('/') + 1)..];
+				prefix = canonical;
+				continue;
+			}
+
+			break;
+		}
+
+		return string.Join('/', segments);
 	}
 
 	private string? ResolveAcrossPlatformSegments(string requested)
@@ -197,8 +230,6 @@ public sealed class SoberApkAssetIndex
 		string fileName = requested[(requested.LastIndexOf('/') + 1)..];
 		if (!_byFileName.TryGetValue(fileName, out List<string>? candidates) || candidates.Count == 0)
 			return null;
-		if (candidates.Count == 1)
-			return candidates[0];
 
 		string? best = null;
 		int bestLength = -1;
@@ -218,7 +249,21 @@ public sealed class SoberApkAssetIndex
 			}
 		}
 
-		return ambiguous ? null : best;
+		return ambiguous || best is null || SharedTailSegments(requested, best) < MinimumSharedTailSegments ? null : best;
+	}
+
+	private static int SharedTailSegments(string left, string right)
+	{
+		string[] leftSegments = left.Split('/');
+		string[] rightSegments = right.Split('/');
+		int shared = 0;
+		while (shared < leftSegments.Length && shared < rightSegments.Length
+			&& string.Equals(leftSegments[^(shared + 1)], rightSegments[^(shared + 1)], StringComparison.OrdinalIgnoreCase))
+		{
+			shared++;
+		}
+
+		return shared;
 	}
 
 	private static int CommonTailLength(string left, string right)

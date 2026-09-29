@@ -22,6 +22,11 @@ public class UserDetails
 
 	public ThumbnailResponse Thumbnail { get; private set; } = null!;
 
+	public static bool IsCached(long id)
+	{
+		return _cache.ContainsKey(id);
+	}
+
 	public static async Task<UserDetails> Fetch(long id, CancellationToken token = default(CancellationToken))
 	{
 		if (_cache.TryGetValue(id, out UserDetails? value))

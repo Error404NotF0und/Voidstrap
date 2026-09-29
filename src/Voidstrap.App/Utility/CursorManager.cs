@@ -279,7 +279,7 @@ internal static class CursorManager
 			foreach (CursorSlot slot in Enum.GetValues<CursorSlot>())
 			{
 				string fileName = Path.GetFileName(RelativePath(slot));
-				string? source = Directory.EnumerateFiles(temporary, fileName, SearchOption.AllDirectories).FirstOrDefault();
+				string? source = Directory.EnumerateFiles(temporary, fileName, new EnumerationOptions { RecurseSubdirectories = true, MatchCasing = MatchCasing.CaseInsensitive }).FirstOrDefault();
 				if (source == null)
 					continue;
 				WriteFile(Path.Combine(folder, RelativePath(slot)), EncodePng(source));

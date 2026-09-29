@@ -72,36 +72,5 @@ public partial class Expander : UserControl{
 	public Expander()
 	{
 		InitializeComponent();
-		Loaded += OnExpanderLoaded;
-	}
-
-	protected override void OnInitialized(EventArgs e)
-	{
-		base.OnInitialized(e);
-		QueueStableLinuxChevron();
-	}
-
-	private void OnExpanderLoaded(object sender, RoutedEventArgs e)
-	{
-		Loaded -= OnExpanderLoaded;
-		QueueStableLinuxChevron();
-	}
-
-	private void QueueStableLinuxChevron()
-	{
-		if (OperatingSystem.IsLinux() && !Wpf.Ui.Controls.ExpanderMotion.GetUseLinuxAnimationClock(this))
-		{
-			Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(ApplyStableLinuxChevron));
-		}
-	}
-
-	private void ApplyStableLinuxChevron()
-	{
-		RootExpander.ApplyTemplate();
-		if (RootExpander.Template.FindName("ExpanderToggleButton", RootExpander) is ToggleButton toggle
-			&& Resources["StableLinuxExpanderToggleButtonStyle"] is ControlTemplate template)
-		{
-			toggle.Template = template;
-		}
 	}
 }

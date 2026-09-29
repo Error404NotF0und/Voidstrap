@@ -50,6 +50,7 @@ public static unsafe partial class LinuxWindowShadow
 	private const int TrueColor = 4;
 	private const int ZPixmap = 2;
 	private const int LsbFirst = 0;
+	private const int ShapeBounding = 0;
 	private const int ShapeInput = 2;
 	private const int ShapeSet = 0;
 	private const int Unsorted = 0;
@@ -192,6 +193,15 @@ public static unsafe partial class LinuxWindowShadow
 		double AmbientOpacity,
 		double ContactBlur,
 		double ContactOpacity);
+
+	[StructLayout(LayoutKind.Sequential)]
+	private struct ShadowXRectangle
+	{
+		public short X;
+		public short Y;
+		public ushort Width;
+		public ushort Height;
+	}
 
 	private readonly record struct PaintKey(
 		int Width,
@@ -375,6 +385,14 @@ public static unsafe partial class LinuxWindowShadow
 
 		public string WindowManager { get; }
 
+		private static bool LeavesFramelessWindowsWithoutShadow(string windowManager)
+		{
+			return windowManager.Contains("GNOME Shell", StringComparison.OrdinalIgnoreCase)
+				|| windowManager.Contains("Mutter", StringComparison.OrdinalIgnoreCase)
+				|| windowManager.Contains("Muffin", StringComparison.OrdinalIgnoreCase)
+				|| windowManager.Contains("Magpie", StringComparison.OrdinalIgnoreCase);
+		}
+
 		public static ShadowHost? Open(out string reason)
 		{
 			nint display = XOpenDisplay(null);
@@ -397,6 +415,8 @@ public static unsafe partial class LinuxWindowShadow
 			nint selection = Intern("_NET_WM_CM_S" + _screen.ToString(CultureInfo.InvariantCulture));
 			if (XGetSelectionOwner(_display, selection) == 0)
 				return "no compositing manager is running";
+			if (!LeavesFramelessWindowsWithoutShadow(WindowManager))
+				return WindowManager + " and its compositor already draw window shadows";
 			if (Array.IndexOf(ReadLongs(_root, _netSupported, AtomType), _netRestackWindow) < 0)
 				return WindowManager + " cannot restack windows";
 
@@ -709,7 +729,10 @@ public static unsafe partial class LinuxWindowShadow
 				shadow.Scale,
 				_activeWindow == shadow.Target);
 			if (key != shadow.Painted && Paint(shadow, key))
+			{
 				shadow.Painted = key;
+				CutOutTarget(shadow.Window, placed, target, shadow.Radius);
+			}
 
 			SyncOpacity(shadow);
 			if (!shadow.MapRequested)
@@ -833,6 +856,48 @@ public static unsafe partial class LinuxWindowShadow
 			shadow.ShadowOpacity = null;
 			_byWindow[window] = shadow;
 			return true;
+		}
+
+		private void CutOutTarget(nint window, ShadowRect placed, ShadowRect target, int radius)
+		{
+			int width = placed.Width;
+			int height = placed.Height;
+			int left = target.X - placed.X;
+			int top = target.Y - placed.Y;
+			int right = left + target.Width;
+			int bottom = top + target.Height;
+			int corner = Math.Clamp(radius, 0, Math.Min(target.Width, target.Height) / 2);
+			ShadowXRectangle* rectangles = stackalloc ShadowXRectangle[8];
+			int count = 0;
+			AddCutRectangle(rectangles, ref count, 0, 0, width, top, width, height);
+			AddCutRectangle(rectangles, ref count, 0, bottom, width, height - bottom, width, height);
+			AddCutRectangle(rectangles, ref count, 0, top, left, target.Height, width, height);
+			AddCutRectangle(rectangles, ref count, right, top, width - right, target.Height, width, height);
+			if (corner > 0)
+			{
+				AddCutRectangle(rectangles, ref count, left, top, corner, corner, width, height);
+				AddCutRectangle(rectangles, ref count, right - corner, top, corner, corner, width, height);
+				AddCutRectangle(rectangles, ref count, left, bottom - corner, corner, corner, width, height);
+				AddCutRectangle(rectangles, ref count, right - corner, bottom - corner, corner, corner, width, height);
+			}
+			XShapeCombineRectangles(_display, window, ShapeBounding, 0, 0, (nint)rectangles, count, ShapeSet, Unsorted);
+		}
+
+		private static void AddCutRectangle(ShadowXRectangle* rectangles, ref int count, int x, int y, int width, int height, int limitWidth, int limitHeight)
+		{
+			int clippedLeft = Math.Clamp(x, 0, limitWidth);
+			int clippedTop = Math.Clamp(y, 0, limitHeight);
+			int clippedRight = Math.Clamp(x + width, 0, limitWidth);
+			int clippedBottom = Math.Clamp(y + height, 0, limitHeight);
+			if (clippedRight <= clippedLeft || clippedBottom <= clippedTop)
+				return;
+			rectangles[count++] = new ShadowXRectangle
+			{
+				X = (short)clippedLeft,
+				Y = (short)clippedTop,
+				Width = (ushort)(clippedRight - clippedLeft),
+				Height = (ushort)(clippedBottom - clippedTop)
+			};
 		}
 
 		private void PrepareMap(Shadow shadow, ShadowRect placed)

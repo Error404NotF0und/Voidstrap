@@ -22,10 +22,14 @@ internal static class RobloxAssetCache
 
 	public const string ManifestName = "AssetCache.lock";
 
-	public static string Root => Path.Combine(
-		Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-		"Roblox",
-		"rbx-storage");
+	public static string Root => Voidstrap.Utility.Platform.IsLinux
+		? Path.Combine(
+			Environment.GetEnvironmentVariable("HOME") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+			".var", "app", "org.vinegarhq.Sober", "cache", "sober", "rbx-storage")
+		: Path.Combine(
+			Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+			"Roblox",
+			"rbx-storage");
 
 	public static bool IsValidHash(string? value)
 	{

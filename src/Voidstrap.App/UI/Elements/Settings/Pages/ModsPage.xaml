@@ -927,19 +927,19 @@
                     <TextBlock Width="44" Margin="8,0,0,0" VerticalAlignment="Center" TextAlignment="Right" Text="{Binding BrightnessDisplay}" />
                   </StackPanel>
                 </controls:OptionControl>
-                <controls:OptionControl Header="Saturation" Description="100 is normal.">
+                <controls:OptionControl Header="Saturation" Description="100 is normal." Visibility="{x:Static platform:PlatformFeatureVisibility.WindowsIntegration}">
                   <StackPanel Orientation="Horizontal">
                     <Slider Width="200" Minimum="0" Maximum="200" TickFrequency="5" IsSnapToTickEnabled="True" VerticalAlignment="Center" Value="{Binding Saturation, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                     <TextBlock Width="44" Margin="8,0,0,0" VerticalAlignment="Center" TextAlignment="Right" Text="{Binding SaturationDisplay}" />
                   </StackPanel>
                 </controls:OptionControl>
-                <controls:OptionControl Header="Contrast" Description="100 is normal.">
+                <controls:OptionControl Header="Contrast" Description="100 is normal." Visibility="{x:Static platform:PlatformFeatureVisibility.WindowsIntegration}">
                   <StackPanel Orientation="Horizontal">
                     <Slider Width="200" Minimum="0" Maximum="200" TickFrequency="5" IsSnapToTickEnabled="True" VerticalAlignment="Center" Value="{Binding Contrast, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                     <TextBlock Width="44" Margin="8,0,0,0" VerticalAlignment="Center" TextAlignment="Right" Text="{Binding ContrastDisplay}" />
                   </StackPanel>
                 </controls:OptionControl>
-                <controls:OptionControl Header="Warmth" Description="Negative is cooler, positive is warmer.">
+                <controls:OptionControl Header="Warmth" Description="Negative is cooler, positive is warmer." Visibility="{x:Static platform:PlatformFeatureVisibility.WindowsIntegration}">
                   <StackPanel Orientation="Horizontal">
                     <Slider Width="200" Minimum="-100" Maximum="100" TickFrequency="5" IsSnapToTickEnabled="True" VerticalAlignment="Center" Value="{Binding ColorTemperature, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                     <TextBlock Width="44" Margin="8,0,0,0" VerticalAlignment="Center" TextAlignment="Right" Text="{Binding ColorTemperatureDisplay}" />
@@ -971,7 +971,7 @@
               </StackPanel>
             </StackPanel>
 
-            <ui:CardExpander Margin="0,8,0,0" IsExpanded="False">
+            <ui:CardExpander Margin="0,8,0,0" IsExpanded="False" Visibility="{x:Static platform:PlatformFeatureVisibility.WindowsIntegration}">
               <HeaderedContentControl.Header>
                 <Grid>
                   <Grid.ColumnDefinitions>

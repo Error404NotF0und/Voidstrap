@@ -148,7 +148,7 @@
                     <DataGridTemplateColumn Header="Allow" Width="70" CanUserSort="False">
                       <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                          <ui:ToggleSwitch HorizontalAlignment="Center" VerticalAlignment="Center" AutomationProperties.Name="{Binding Location}" IsChecked="{Binding IsAllowed, Mode=TwoWay}" />
+                          <ui:ToggleSwitch HorizontalAlignment="Center" VerticalAlignment="Center" AutomationProperties.Name="{Binding Location}" IsChecked="{Binding IsAllowed, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                         </DataTemplate>
                       </DataGridTemplateColumn.CellTemplate>
                     </DataGridTemplateColumn>

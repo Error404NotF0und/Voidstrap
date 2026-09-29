@@ -250,7 +250,7 @@ internal static class Paths
 
 	public static string CustomFontSource => Path.Combine(Data, "CustomFontSource.bin");
 
-	public static string CustomDeathSound => Path.Combine(Mods, "Content", "sounds", "oof.ogg");
+	public static string CustomDeathSound => Path.Combine(Mods, "content", "sounds", "oof.ogg");
 
 	public static string CustomDeathSoundSource => Path.Combine(Data, "CustomDeathSoundSource.ogg");
 

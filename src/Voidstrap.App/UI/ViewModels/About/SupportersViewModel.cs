@@ -46,31 +46,40 @@ public class SupportersViewModel : NotifyPropertyChangedViewModel, IDisposable
 	{
 		if (e.WidthChanged)
 		{
-			Size newSize = e.NewSize;
-			int num = (int)Math.Floor(newSize.Width / ColumnWidth);
-			if (num < 1)
-			{
-				num = 1;
-			}
-
-			if (num == Columns)
-			{
-				return;
-			}
-
-			if (num > Columns && newSize.Width < (Columns + 1) * ColumnWidth + ColumnHysteresis)
-			{
-				return;
-			}
-
-			if (num < Columns && newSize.Width > Columns * ColumnWidth - ColumnHysteresis)
-			{
-				return;
-			}
-
-			Columns = num;
-			OnPropertyChanged(nameof(Columns));
+			UpdateColumns(e.NewSize.Width);
 		}
+	}
+
+	public void UpdateColumns(double width)
+	{
+		if (_disposed || !double.IsFinite(width) || width <= 0.0)
+		{
+			return;
+		}
+
+		int num = (int)Math.Floor(width / ColumnWidth);
+		if (num < 1)
+		{
+			num = 1;
+		}
+
+		if (num == Columns)
+		{
+			return;
+		}
+
+		if (num > Columns && width < (Columns + 1) * ColumnWidth + ColumnHysteresis)
+		{
+			return;
+		}
+
+		if (num < Columns && width > Columns * ColumnWidth - ColumnHysteresis)
+		{
+			return;
+		}
+
+		Columns = num;
+		OnPropertyChanged(nameof(Columns));
 	}
 
 	private void Retry()

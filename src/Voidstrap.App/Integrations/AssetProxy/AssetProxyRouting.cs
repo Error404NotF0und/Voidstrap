@@ -102,16 +102,36 @@ internal static class AssetProxyRouting
 
 	public static void ClearRobloxCache()
 	{
-		if (!Voidstrap.Utility.Platform.IsWindows)
+		string roblox;
+		string[] files;
+		if (Voidstrap.Utility.Platform.IsLinux)
+		{
+			string home = Environment.GetEnvironmentVariable("HOME") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+			string sober = Path.GetFullPath(Path.Combine(home, ".var", "app", "org.vinegarhq.Sober"));
+			string appData = Path.Combine(sober, "data", "sober", "appData");
+			roblox = Path.Combine(sober, "cache", "sober");
+			files =
+			[
+				Path.Combine(appData, "rbx-storage.db"),
+				Path.Combine(appData, "rbx-storage.db-wal"),
+				Path.Combine(appData, "rbx-storage.db-shm")
+			];
+		}
+		else if (Voidstrap.Utility.Platform.IsWindows)
+		{
+			string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+			roblox = Path.GetFullPath(Path.Combine(local, "Roblox"));
+			string gdk = Path.GetFullPath(Path.Combine(local, "RobloxPCGDK"));
+			files =
+			[
+				Path.Combine(roblox, "rbx-storage.db"),
+				Path.Combine(gdk, "rbx-storage.db")
+			];
+		}
+		else
+		{
 			return;
-		string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-		string roblox = Path.GetFullPath(Path.Combine(local, "Roblox"));
-		string gdk = Path.GetFullPath(Path.Combine(local, "RobloxPCGDK"));
-		string[] files =
-		[
-			Path.Combine(roblox, "rbx-storage.db"),
-			Path.Combine(gdk, "rbx-storage.db")
-		];
+		}
 		foreach (string file in files)
 		{
 			try

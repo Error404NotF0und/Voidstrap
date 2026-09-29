@@ -86,10 +86,7 @@ namespace Voidstrap.Utility
         public static void ApplyConfigured()
         {
             if (Voidstrap.Utility.Platform.IsLinux)
-            {
-                Voidstrap.Integrations.LinuxLiveColor.ScheduleConfigured();
                 return;
-            }
 
             Apply(
                 App.Settings.Prop.Saturation,
@@ -176,12 +173,6 @@ namespace Voidstrap.Utility
 
         public static void Reset()
         {
-            if (Voidstrap.Utility.Platform.IsLinux)
-            {
-                Voidstrap.Integrations.LinuxLiveColor.ScheduleNeutral();
-                return;
-            }
-
             if (!Voidstrap.Utility.Platform.IsWindows)
                 return;
 

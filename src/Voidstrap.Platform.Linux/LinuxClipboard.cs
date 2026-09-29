@@ -12,11 +12,16 @@ public static partial class LinuxClipboard
 	private const int ClientMessage = 33;
 
 	private const int PropModeReplace = 0;
+	private const int PropertyNewValue = 0;
+	private const int XFixesSelectionNotify = 0;
+	private const ulong XFixesSetSelectionOwnerNotifyMask = 1;
 	private const nint AnyPropertyType = 0;
 	private const nint AtomAtom = 4;
 	private const nint AtomString = 31;
 	private const long StructureNotifyMask = 1L << 17;
 	private const long PropertyChangeMask = 1L << 22;
+	private const int ReadTimeoutMilliseconds = 1000;
+	private const int IncrementalTimeoutMilliseconds = 5000;
 
 	private static readonly object Gate = new();
 	private static Thread? _owner;
@@ -29,10 +34,14 @@ public static partial class LinuxClipboard
 	private static nint _targetsAtom;
 	private static nint _utf8Atom;
 	private static nint _textAtom;
+	private static nint _mimeTextAtom;
 	private static nint _wakeAtom;
+	private static int _fixesEventBase = -1;
 
 	private static string _text = string.Empty;
 	private static bool _hasText;
+
+	public static event Action? Changed;
 
 	public static bool IsAvailable
 	{
@@ -43,6 +52,8 @@ public static partial class LinuxClipboard
 			return EnsureOwner();
 		}
 	}
+
+	public static bool TracksChanges => IsAvailable && _fixesEventBase >= 0;
 
 	public static bool SetText(string? text)
 	{
@@ -103,6 +114,7 @@ public static partial class LinuxClipboard
 			try
 			{
 				_ = XInitThreads();
+				LinuxWindowInterop.KeepIgnoringXErrors();
 				nint display = XOpenDisplay(null);
 				if (display == 0)
 				{
@@ -128,7 +140,9 @@ public static partial class LinuxClipboard
 				_targetsAtom = XInternAtom(display, "TARGETS", false);
 				_utf8Atom = XInternAtom(display, "UTF8_STRING", false);
 				_textAtom = XInternAtom(display, "TEXT", false);
+				_mimeTextAtom = XInternAtom(display, "text/plain;charset=utf-8", false);
 				_wakeAtom = XInternAtom(display, "VOIDSTRAP_CLIPBOARD_WAKE", false);
+				TrackOwnerChanges(display, window);
 
 				_owner = new Thread(PumpEvents)
 				{
@@ -143,6 +157,25 @@ public static partial class LinuxClipboard
 				_unavailable = true;
 				return false;
 			}
+		}
+	}
+
+	private static void TrackOwnerChanges(nint display, nint window)
+	{
+		try
+		{
+			if (XFixesQueryExtension(display, out int eventBase, out _) == 0)
+				return;
+
+			XFixesSelectSelectionInput(display, window, _clipboardAtom, XFixesSetSelectionOwnerNotifyMask);
+			_ = XFlush(display);
+			_fixesEventBase = eventBase;
+		}
+		catch (DllNotFoundException)
+		{
+		}
+		catch (EntryPointNotFoundException)
+		{
 		}
 	}
 
@@ -177,16 +210,43 @@ public static partial class LinuxClipboard
 
 			if (type == SelectionClear)
 			{
-				lock (Gate)
+				if (ReadNint(buffer, 40) == _clipboardAtom)
 				{
-					_hasText = false;
-					_text = string.Empty;
+					lock (Gate)
+					{
+						_hasText = false;
+						_text = string.Empty;
+					}
 				}
 				continue;
 			}
 
 			if (type == SelectionRequest)
+			{
 				ServeRequest(buffer);
+				continue;
+			}
+
+			if (_fixesEventBase >= 0 && type == _fixesEventBase + XFixesSelectionNotify && ReadNint(buffer, 56) == _clipboardAtom)
+				RaiseChanged();
+		}
+	}
+
+	private static void RaiseChanged()
+	{
+		Action? handlers = Changed;
+		if (handlers is null)
+			return;
+
+		foreach (Delegate handler in handlers.GetInvocationList())
+		{
+			try
+			{
+				((Action)handler)();
+			}
+			catch (Exception)
+			{
+			}
 		}
 	}
 
@@ -206,14 +266,14 @@ public static partial class LinuxClipboard
 		{
 			if (target == _targetsAtom)
 			{
-				nint[] targets = [_targetsAtom, _utf8Atom, AtomString, _textAtom];
+				nint[] targets = [_targetsAtom, _utf8Atom, _mimeTextAtom, AtomString, _textAtom];
 				byte[] payload = new byte[targets.Length * IntPtr.Size];
 				for (int index = 0; index < targets.Length; index++)
 					WriteNint(payload, index * IntPtr.Size, targets[index]);
 				XChangeProperty(_display, requestor, property, AtomAtom, 32, PropModeReplace, payload, targets.Length);
 				result = property;
 			}
-			else if (target == _utf8Atom || target == AtomString || target == _textAtom)
+			else if (target == _utf8Atom || target == _mimeTextAtom || target == AtomString || target == _textAtom)
 			{
 				string text;
 				lock (Gate)
@@ -221,8 +281,8 @@ public static partial class LinuxClipboard
 					text = _hasText ? _text : string.Empty;
 				}
 
-				byte[] payload = Encoding.UTF8.GetBytes(text);
-				nint type = target == AtomString ? AtomString : _utf8Atom;
+				byte[] payload = target == AtomString ? Encoding.Latin1.GetBytes(text) : Encoding.UTF8.GetBytes(text);
+				nint type = target == AtomString ? AtomString : target == _mimeTextAtom ? _mimeTextAtom : _utf8Atom;
 				XChangeProperty(_display, requestor, property, type, 8, PropModeReplace, payload, payload.Length);
 				result = property;
 			}
@@ -246,6 +306,9 @@ public static partial class LinuxClipboard
 
 	private static string? ReadSelection()
 	{
+		if (!EnsureOwner())
+			return null;
+
 		nint display = 0;
 		nint window = 0;
 		try
@@ -261,34 +324,23 @@ public static partial class LinuxClipboard
 
 			_ = XSelectInput(display, window, PropertyChangeMask);
 			nint clipboard = XInternAtom(display, "CLIPBOARD", false);
-			nint utf8 = XInternAtom(display, "UTF8_STRING", false);
 			nint destination = XInternAtom(display, "VOIDSTRAP_CLIPBOARD_IN", false);
+			nint incremental = XInternAtom(display, "INCR", false);
+			nint[] targets =
+			[
+				XInternAtom(display, "UTF8_STRING", false),
+				XInternAtom(display, "text/plain;charset=utf-8", false),
+				AtomString
+			];
 
 			if (XGetSelectionOwner(display, clipboard) == 0)
 				return null;
 
-			_ = XConvertSelection(display, clipboard, utf8, destination, window, 0);
-			_ = XFlush(display);
-
-			byte[] buffer = new byte[192];
-			long deadline = Environment.TickCount64 + 1000;
-			while (Environment.TickCount64 < deadline)
+			foreach (nint target in targets)
 			{
-				if (XPending(display) == 0)
-				{
-					Thread.Sleep(5);
-					continue;
-				}
-
-				XNextEvent(display, buffer);
-				if (ReadInt(buffer, 0) != SelectionNotify)
-					continue;
-
-				nint property = ReadNint(buffer, 56);
-				if (property == 0)
-					return null;
-
-				return ReadProperty(display, window, property);
+				string? text = ConvertSelection(display, window, clipboard, target, destination, incremental);
+				if (text is not null)
+					return text;
 			}
 
 			return null;
@@ -312,8 +364,92 @@ public static partial class LinuxClipboard
 		}
 	}
 
-	private static string? ReadProperty(nint display, nint window, nint property)
+	private static string? ConvertSelection(nint display, nint window, nint selection, nint target, nint destination, nint incremental)
 	{
+		_ = XConvertSelection(display, selection, target, destination, window, 0);
+		_ = XFlush(display);
+
+		byte[] buffer = new byte[192];
+		if (!WaitForEvent(display, buffer, ReadTimeoutMilliseconds, static (message, _) => ReadInt(message, 0) == SelectionNotify, 0))
+			return null;
+
+		nint property = ReadNint(buffer, 56);
+		if (property == 0)
+			return null;
+
+		if (!ReadProperty(display, window, property, out nint type, out int format, out byte[] bytes))
+			return null;
+
+		if (type == incremental)
+			return ReadIncremental(display, window, property, target);
+
+		if (format != 8)
+			return null;
+
+		return Decode(bytes, target);
+	}
+
+	private static string? ReadIncremental(nint display, nint window, nint property, nint target)
+	{
+		using MemoryStream collected = new();
+		byte[] buffer = new byte[192];
+		long deadline = Environment.TickCount64 + IncrementalTimeoutMilliseconds;
+		while (Environment.TickCount64 < deadline)
+		{
+			int remaining = (int)Math.Max(1, deadline - Environment.TickCount64);
+			bool arrived = WaitForEvent(
+				display,
+				buffer,
+				remaining,
+				static (message, watched) => ReadInt(message, 0) == PropertyNotify && ReadNint(message, 40) == watched && ReadInt(message, 56) == PropertyNewValue,
+				property);
+			if (!arrived)
+				return null;
+
+			if (!ReadProperty(display, window, property, out _, out int format, out byte[] chunk))
+				return null;
+
+			if (chunk.Length == 0)
+				return Decode(collected.ToArray(), target);
+
+			if (format != 8)
+				return null;
+
+			collected.Write(chunk, 0, chunk.Length);
+		}
+
+		return null;
+	}
+
+	private static bool WaitForEvent(nint display, byte[] buffer, int timeoutMilliseconds, Func<byte[], nint, bool> match, nint argument)
+	{
+		long deadline = Environment.TickCount64 + timeoutMilliseconds;
+		while (Environment.TickCount64 < deadline)
+		{
+			if (XPending(display) == 0)
+			{
+				Thread.Sleep(2);
+				continue;
+			}
+
+			XNextEvent(display, buffer);
+			if (match(buffer, argument))
+				return true;
+		}
+
+		return false;
+	}
+
+	private static string Decode(byte[] bytes, nint target)
+	{
+		return target == AtomString ? Encoding.Latin1.GetString(bytes) : Encoding.UTF8.GetString(bytes);
+	}
+
+	private static bool ReadProperty(nint display, nint window, nint property, out nint type, out int format, out byte[] bytes)
+	{
+		type = 0;
+		format = 0;
+		bytes = [];
 		nint data = 0;
 		try
 		{
@@ -325,28 +461,35 @@ public static partial class LinuxClipboard
 				int.MaxValue / 4,
 				true,
 				AnyPropertyType,
-				out _,
-				out int format,
+				out type,
+				out format,
 				out nint count,
 				out _,
 				out data);
 
 			if (status != 0)
-				return null;
+				return false;
 
-			if (count <= 0)
-				return string.Empty;
+			if (count <= 0 || data == 0)
+				return true;
 
-			if (data == 0 || format != 8)
-				return null;
+			int unit = format switch
+			{
+				8 => 1,
+				16 => 2,
+				32 => IntPtr.Size,
+				_ => 0
+			};
+			if (unit == 0)
+				return false;
 
-			byte[] bytes = new byte[(int)count];
+			bytes = new byte[(int)count * unit];
 			Marshal.Copy(data, bytes, 0, bytes.Length);
-			return Encoding.UTF8.GetString(bytes);
+			return true;
 		}
 		catch (Exception)
 		{
-			return null;
+			return false;
 		}
 		finally
 		{
@@ -430,4 +573,10 @@ public static partial class LinuxClipboard
 
 	[LibraryImport("libX11.so.6")]
 	private static partial int XFree(nint data);
+
+	[LibraryImport("libXfixes.so.3")]
+	private static partial int XFixesQueryExtension(nint display, out int eventBase, out int errorBase);
+
+	[LibraryImport("libXfixes.so.3")]
+	private static partial void XFixesSelectSelectionInput(nint display, nint window, nint selection, ulong eventMask);
 }

@@ -74,6 +74,8 @@ public static class LinuxTextGuard
 		public bool OwnsLineHeight;
 		public bool OwnsMinHeight;
 		public bool OwnsFontSize;
+		public bool OwnsAlignment;
+		public System.Windows.HorizontalAlignment OriginalHorizontalAlignment;
 		public TextWrapping OriginalWrapping;
 		public double OriginalMaxWidth;
 		public double OriginalLineHeight;
@@ -100,6 +102,7 @@ public static class LinuxTextGuard
 		public int AlignmentPending;
 		public int OwnerPending;
 		public int OwnerGeneration;
+		public int ReflowPending;
 	}
 
 	private sealed class AlignmentState
@@ -142,6 +145,49 @@ public static class LinuxTextGuard
 		EventManager.RegisterClassHandler(typeof(Wpf.Ui.Controls.UiPage), FrameworkElement.LoadedEvent, new RoutedEventHandler(OnPageLoaded));
 		EventManager.RegisterClassHandler(typeof(Wpf.Ui.Controls.UiPage), FrameworkElement.SizeChangedEvent, new SizeChangedEventHandler(OnPageResized));
 		EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent, new RoutedEventHandler(OnWindowLoaded));
+		EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.SizeChangedEvent, new SizeChangedEventHandler(OnWindowResized));
+	}
+
+	private static void OnWindowResized(object sender, SizeChangedEventArgs e)
+	{
+		if (e.WidthChanged && sender is Window window && window.IsLoaded)
+		{
+			QueueReflow(window, WindowStates.GetValue(window, static _ => new TraversalState()), () => QueueDescendants(window, window, true));
+		}
+	}
+
+	private static void QueueReflow(FrameworkElement root, TraversalState state, Action reflow)
+	{
+		if (Interlocked.Exchange(ref state.ReflowPending, 1) != 0)
+		{
+			return;
+		}
+
+		root.Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() => RunReflow(root, state, reflow)));
+	}
+
+	private static void RunReflow(FrameworkElement root, TraversalState state, Action reflow)
+	{
+		if (Wpf.Ui.Animations.RenderReady.IsLayoutMotionActive)
+		{
+			DispatcherTimer timer = new DispatcherTimer(DispatcherPriority.ContextIdle, root.Dispatcher)
+			{
+				Interval = TimeSpan.FromMilliseconds(120)
+			};
+			timer.Tick += (_, _) =>
+			{
+				timer.Stop();
+				RunReflow(root, state, reflow);
+			};
+			timer.Start();
+			return;
+		}
+
+		Volatile.Write(ref state.ReflowPending, 0);
+		if (root.IsLoaded)
+		{
+			reflow();
+		}
 	}
 
 	internal static void PrepareWindow(Window window)
@@ -235,6 +281,11 @@ public static class LinuxTextGuard
 	{
 		if (e.WidthChanged && sender is Wpf.Ui.Controls.UiPage page)
 		{
+			TraversalState state = PageStates.GetValue(page, static _ => new TraversalState());
+			if (Volatile.Read(ref state.InitialPassCompleted) != 0)
+			{
+				QueueReflow(page, state, () => QueueDescendants(page, FindPageOwner(page)));
+			}
 			QueuePageCorrection(page);
 		}
 	}
@@ -515,8 +566,11 @@ public static class LinuxTextGuard
 		FlowState state = FlowStates.GetValue(block, static _ => new FlowState());
 		Initialize(block, state);
 		state.Sanitized = false;
-		state.Source = string.Empty;
-		state.Rendered = string.Empty;
+		if (state.Rendered.Length == 0 || !string.Equals(ReadText(block), state.Rendered, StringComparison.Ordinal))
+		{
+			state.Source = string.Empty;
+			state.Rendered = string.Empty;
+		}
 		state.Corrections = 0;
 		state.Shrinks = 0;
 		state.OwnerWidth = double.NaN;
@@ -828,6 +882,7 @@ public static class LinuxTextGuard
 	private static void Correct(TextBlock block, FlowState state, bool ownerAttached = false)
 	{
 		RemoveUndrawableCharacters(block);
+		LinuxInlineText.PrepareLinks(block);
 		if (!ownerAttached && !CanCorrect(block, state))
 		{
 			return;
@@ -971,6 +1026,12 @@ public static class LinuxTextGuard
 			state.AppliedMaxWidth = double.NaN;
 		}
 
+		if (state.OwnsAlignment)
+		{
+			block.SetCurrentValue(FrameworkElement.HorizontalAlignmentProperty, state.OriginalHorizontalAlignment);
+			state.OwnsAlignment = false;
+		}
+
 		if (state.OwnsLineHeight)
 		{
 			block.SetCurrentValue(TextBlock.LineHeightProperty, state.OriginalLineHeight);
@@ -991,6 +1052,19 @@ public static class LinuxTextGuard
 			state.AppliedFontSize = double.NaN;
 			block.SetCurrentValue(TextElement.FontSizeProperty, state.OriginalFontSize);
 		}
+	}
+
+	private static bool PinAlignment(TextBlock block, FlowState state)
+	{
+		if (state.OwnsAlignment || block.HorizontalAlignment != System.Windows.HorizontalAlignment.Stretch || block.TextAlignment == TextAlignment.Center)
+		{
+			return false;
+		}
+
+		state.OriginalHorizontalAlignment = block.HorizontalAlignment;
+		state.OwnsAlignment = true;
+		block.SetCurrentValue(FrameworkElement.HorizontalAlignmentProperty, block.TextAlignment == TextAlignment.Right ? System.Windows.HorizontalAlignment.Right : System.Windows.HorizontalAlignment.Left);
+		return true;
 	}
 
 	private static bool TryApplyClampedFlow(TextBlock block, FlowState state)
@@ -1179,6 +1253,11 @@ public static class LinuxTextGuard
 			changed = true;
 		}
 
+		if (PinAlignment(block, state))
+		{
+			changed = true;
+		}
+
 		if (!state.OwnsFontSize && state.OwnsLineHeight && HasFiniteWidth(state.OriginalLineHeight))
 		{
 			block.SetCurrentValue(TextBlock.LineHeightProperty, state.OriginalLineHeight);
@@ -1215,6 +1294,13 @@ public static class LinuxTextGuard
 			block.SetCurrentValue(FrameworkElement.MinHeightProperty, minimumHeight);
 			state.OwnsMinHeight = true;
 			state.AppliedMinHeight = minimumHeight;
+			changed = true;
+		}
+		else if (renderedLines <= 1 && state.OwnsMinHeight)
+		{
+			block.SetCurrentValue(FrameworkElement.MinHeightProperty, state.OriginalMinHeight);
+			state.OwnsMinHeight = false;
+			state.AppliedMinHeight = double.NaN;
 			changed = true;
 		}
 

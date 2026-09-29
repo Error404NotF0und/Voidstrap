@@ -72,6 +72,11 @@ internal partial class Installer
 			{
 				throw new InvalidOperationException("Linux platform storage is unavailable");
 			}
+			if (host.Paths is Voidstrap.Platform.Linux.LinuxPaths linuxPaths && !string.IsNullOrWhiteSpace(InstallLocation))
+			{
+				linuxPaths.RelocateData(InstallLocation);
+				App.Logger.WriteLine("Installer::DoInstall", "Voidstrap data will live in " + linuxPaths.Storage.Data);
+			}
 			Voidstrap.Platform.OperationResult directoryResult = host.Paths.EnsureDirectoriesAsync().GetAwaiter().GetResult();
 			if (!directoryResult.Succeeded)
 			{
@@ -197,7 +202,8 @@ internal partial class Installer
 		{
 			return false;
 		}
-		if (string.Compare(Directory.GetParent(InstallLocation)?.FullName, Paths.UserProfile, StringComparison.InvariantCultureIgnoreCase) == 0)
+		if (string.Compare(Directory.GetParent(InstallLocation)?.FullName, Paths.UserProfile, StringComparison.InvariantCultureIgnoreCase) == 0
+			&& !(Voidstrap.Utility.Platform.IsLinux && string.Equals(Path.GetFileName(Path.TrimEndingDirectorySeparator(InstallLocation)), "voidstrap", StringComparison.OrdinalIgnoreCase)))
 		{
 			return false;
 		}
@@ -1040,6 +1046,139 @@ internal partial class Installer
 		if (productVersion2 != null && !flag)
 		{
 			Frontend.ShowMessageBox(string.Format(Strings.InstallChecker_Updated, productVersion2), MessageBoxImage.Asterisk);
+		}
+	}
+
+	private sealed record LinuxInstalledCopy(string Path, string Version, long Length, long LastWriteTicks);
+
+	private static string LinuxInstalledCopyFile => Path.Combine(Paths.Base, "InstalledCopy.json");
+
+	public static async Task HandleLinuxUpgradeAsync()
+	{
+		if (!Voidstrap.Utility.Platform.IsLinux || App.LaunchSettings.IsHelperInvocation || Voidstrap.Platform.Linux.LinuxFlatpakHost.IsSandboxed)
+		{
+			return;
+		}
+		string running = Path.GetFullPath(Paths.Application);
+		string? installed = LinuxDesktopEntry.InstalledTarget();
+		if (installed == null || !File.Exists(running))
+		{
+			return;
+		}
+		if (string.Equals(installed, running, StringComparison.Ordinal))
+		{
+			RecordLinuxInstalledCopy(installed);
+			return;
+		}
+		if (LinuxDesktopEntry.IsVolatileLocation(running)
+			|| Voidstrap.Platform.Linux.LinuxBundleInstaller.IsPackageManagedLocation(Path.GetDirectoryName(running) ?? "/")
+			|| Voidstrap.Platform.Linux.LinuxAppImageHost.HasValidHeader(running) != Voidstrap.Platform.Linux.LinuxAppImageHost.HasValidHeader(installed)
+			|| MD5Hash.FromFile(running) == MD5Hash.FromFile(installed))
+		{
+			return;
+		}
+		bool flag = App.LaunchSettings.UpgradeFlag.Active;
+		string? installedVersion = ReadLinuxInstalledVersion(installed);
+		if ((installedVersion != null && Utilities.CompareVersions(App.Version, installedVersion) == VersionComparison.LessThan && Frontend.ShowMessageBox(Strings.InstallChecker_VersionLessThanInstalled, MessageBoxImage.Question, MessageBoxButton.YesNo) != MessageBoxResult.Yes) || (!flag && Frontend.ShowMessageBox(Strings.InstallChecker_VersionDifferentThanInstalled, MessageBoxImage.Question, MessageBoxButton.YesNo) != MessageBoxResult.Yes))
+		{
+			App.Logger.WriteLine("Installer::HandleLinuxUpgrade", "Kept the installed copy at " + installed);
+			return;
+		}
+		App.Logger.WriteLine("Installer::HandleLinuxUpgrade", "Doing upgrade of " + installed);
+		for (int i = 1; i <= 10; i++)
+		{
+			try
+			{
+				ReplaceLinuxInstalledCopy(running, installed);
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			{
+				switch (i)
+				{
+				case 1:
+					App.Logger.WriteLine("Installer::HandleLinuxUpgrade", "Waiting for write permissions to update version");
+					break;
+				case 10:
+					App.Logger.WriteLine("Installer::HandleLinuxUpgrade", "Failed to update! (Could not get write permissions after 10 tries/5 seconds)");
+					App.Logger.WriteException("Installer::HandleLinuxUpgrade", ex);
+					return;
+				}
+				await Task.Delay(500);
+				continue;
+			}
+			break;
+		}
+		RecordLinuxInstalledCopy(installed);
+		if (installedVersion != null)
+		{
+			App.Settings.Save();
+			App.FastFlags.Save();
+			App.State.Save();
+		}
+		Voidstrap.Utility.AppNotifications.RecordInfo("upgrade:" + App.Version, "Voidstrap updated", "Voidstrap was updated to version " + App.Version + ".");
+		if (!flag)
+		{
+			Frontend.ShowMessageBox(string.Format(Strings.InstallChecker_Updated, App.Version), MessageBoxImage.Asterisk);
+		}
+	}
+
+	private static void ReplaceLinuxInstalledCopy(string source, string destination)
+	{
+		string directory = Path.GetDirectoryName(destination) ?? throw new InvalidOperationException("The install directory is unavailable");
+		string stagedPath = Path.Combine(directory, "." + Path.GetFileName(destination) + ".update." + Guid.NewGuid().ToString("N"));
+		try
+		{
+			File.Copy(source, stagedPath, overwrite: false);
+			Voidstrap.Utility.InstallRecord.MakeExecutable(stagedPath);
+			File.Move(stagedPath, destination, overwrite: true);
+		}
+		finally
+		{
+			if (File.Exists(stagedPath))
+			{
+				File.Delete(stagedPath);
+			}
+		}
+	}
+
+	private static void RecordLinuxInstalledCopy(string path)
+	{
+		try
+		{
+			FileInfo info = new(path);
+			string json = JsonSerializer.Serialize(new LinuxInstalledCopy(path, App.Version, info.Length, info.LastWriteTimeUtc.Ticks));
+			if (File.Exists(LinuxInstalledCopyFile) && string.Equals(File.ReadAllText(LinuxInstalledCopyFile), json, StringComparison.Ordinal))
+			{
+				return;
+			}
+			Directory.CreateDirectory(Paths.Base);
+			string temporary = LinuxInstalledCopyFile + ".tmp";
+			File.WriteAllText(temporary, json);
+			File.Move(temporary, LinuxInstalledCopyFile, overwrite: true);
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			App.Logger.WriteLine("Installer::RecordLinuxInstalledCopy", "The installed copy could not be recorded: " + ex.Message);
+		}
+	}
+
+	private static string? ReadLinuxInstalledVersion(string path)
+	{
+		try
+		{
+			if (!File.Exists(LinuxInstalledCopyFile))
+			{
+				return null;
+			}
+			LinuxInstalledCopy? record = JsonSerializer.Deserialize<LinuxInstalledCopy>(File.ReadAllText(LinuxInstalledCopyFile));
+			FileInfo info = new(path);
+			return record != null && string.Equals(record.Path, path, StringComparison.Ordinal) && record.Length == info.Length && record.LastWriteTicks == info.LastWriteTimeUtc.Ticks
+				? record.Version
+				: null;
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+		{
+			return null;
 		}
 	}
 

@@ -67,6 +67,8 @@ internal readonly struct HomepageBackgroundColorTransform
 
 	public static HomepageBackgroundColorTransform ReadConfigured()
 	{
+		if (Voidstrap.Utility.Platform.IsLinux)
+			return Create(100d, 100d, 0d, false, 1, 100d, false);
 		var settings = App.Settings.Prop;
 		return Create(
 			settings.Saturation,
