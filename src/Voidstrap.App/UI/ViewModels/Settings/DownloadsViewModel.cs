@@ -720,6 +720,8 @@ namespace Voidstrap.UI.ViewModels.Settings
 
         public class ClientItem : NotifyPropertyChangedViewModel
         {
+            public bool IsVng => false;
+
             private readonly DownloadsViewModel _parent;
             private CancellationTokenSource? _cts = null!;
 

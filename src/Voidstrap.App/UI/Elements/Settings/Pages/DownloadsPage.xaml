@@ -72,6 +72,17 @@
                             <MouseBinding MouseAction="LeftClick" Command="{Binding SelectCommand}" />
                         </Border.InputBindings>
                         <Grid>
+                            <Border CornerRadius="10" Margin="1">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsVng}" Value="True">
+                                                <Setter Property="Background" Value="#335FFF" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                            </Border>
                             <Border CornerRadius="10" Margin="1" ClipToBounds="True">
                                 <Border.Background>
                                     <ImageBrush ImageSource="{Binding IconImage}" Stretch="UniformToFill" />
