@@ -42,6 +42,7 @@ namespace Voidstrap.Models.Persistable
 
         public CleanerOptions CleanerOptions { get; set; } = CleanerOptions.Never;
         public List<string> CleanerDirectories { get; set; } = [];
+        public Dictionary<string, uint> OriginalNetworkMtuValues { get; set; } = [];
         public string BootstrapperTitle { get; set; } = App.ProjectName;
         public string BootstrapperIconCustomLocation { get; set; } = "";
         public Theme Theme2 { get; set; } = Theme.Dark;

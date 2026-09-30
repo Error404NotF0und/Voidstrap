@@ -34,7 +34,13 @@ internal static class Frontend
 			confirmation.ButtonTwo.IsCancel = true;
 			confirmation.ButtonTwo.IsDefault = true;
 			confirmation.ShowOwnedDialog();
-			return confirmation.Result == MessageBoxResult.Yes;
+			if (confirmation.Result != MessageBoxResult.Yes)
+				return false;
+			const string agreementText = "I AGREE";
+			TextInputDialog agreement = new(Strings.Vng_Agreement, string.Empty, agreementText);
+			agreement.Title = Strings.Vng_WarningTitle;
+			agreement.ShowOwnedDialog();
+			return agreement.Confirmed && string.Equals(agreement.Value, agreementText, StringComparison.Ordinal);
 		});
 	}
 

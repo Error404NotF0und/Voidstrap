@@ -19,6 +19,7 @@ public partial class BehaviourPage : UiPage{
 	{
 		base.DataContext = new BehaviourViewModel();
 		InitializeComponent();
+		MtuOption.DataContext = ((BehaviourViewModel)base.DataContext).Mtu;
 		_settingsRevision = App.Settings.Revision;
 		base.Loaded += OnPageLoaded;
 		base.Unloaded += OnPageUnloaded;
@@ -33,12 +34,16 @@ public partial class BehaviourPage : UiPage{
 				behaviourViewModel.OnPropertyChanged(string.Empty);
 			}
 			behaviourViewModel.RefreshExcludedGames();
+			if (behaviourViewModel.Mtu.RefreshCommand.CanExecute(null))
+				behaviourViewModel.Mtu.RefreshCommand.Execute(null);
 		}
 	}
 
 	private void OnPageUnloaded(object sender, RoutedEventArgs e)
 	{
 		_settingsRevision = App.Settings.Revision;
+		if (base.DataContext is BehaviourViewModel behaviourViewModel)
+			behaviourViewModel.Mtu.RefreshCommand.Cancel();
 	}
 
 	private void ResetDatacenters_Click(object sender, RoutedEventArgs e)

@@ -13,10 +13,11 @@
       <RowDefinition Height="Auto" />
     </Grid.RowDefinitions>
 
-    <ui:TitleBar Grid.Row="0" Padding="8" CanMaximize="False" KeyboardNavigation.TabNavigation="None" ShowMaximize="False" ShowMinimize="False" Title="Voidstrap" />
+    <ui:TitleBar Grid.Row="0" Padding="8" CanMaximize="False" KeyboardNavigation.TabNavigation="None" ShowMaximize="False" ShowMinimize="False" Title="{Binding Title, RelativeSource={RelativeSource AncestorType=Window}}" />
 
     <StackPanel Grid.Row="1" Margin="16">
       <TextBlock Name="PromptText" Margin="0,0,0,8" TextWrapping="Wrap" />
+      <TextBox Name="RequiredValueBox" Margin="0,0,0,8" IsReadOnly="True" IsTabStop="False" Visibility="Collapsed" />
       <TextBox Name="ValueBox" KeyDown="OnValueKeyDown" />
       <TextBlock Name="SecondPromptText" Margin="0,14,0,8" TextWrapping="Wrap" Visibility="Collapsed" />
       <TextBox Name="SecondValueBox" KeyDown="OnValueKeyDown" Visibility="Collapsed" />
@@ -24,7 +25,7 @@
 
     <Border Grid.Row="2" Padding="15" Background="{DynamicResource PrimaryBackgroundColor}">
       <StackPanel HorizontalAlignment="Right" Orientation="Horizontal">
-        <Button MinWidth="100" Content="{x:Static resources:Strings.Common_OK}" Click="OnOkClicked" />
+        <Button Name="OkButton" MinWidth="100" Content="{x:Static resources:Strings.Common_OK}" Click="OnOkClicked" />
         <Button MinWidth="100" Margin="12,0,0,0" Content="{x:Static resources:Strings.Common_Cancel}" IsCancel="True" />
       </StackPanel>
     </Border>

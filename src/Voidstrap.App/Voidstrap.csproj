@@ -255,6 +255,8 @@
 		</PropertyGroup>
 	</Target>
 
+	<Target Name="PrepareWindowsProjectionForMarkup" BeforeTargets="GenerateTemporaryTargetAssembly;CoreCompile" DependsOnTargets="CsWinRTIncludeProjection" Condition="'$(CsWinRTEnabled)' == 'true'" />
+
 	<Target Name="FixMds" BeforeTargets="CoreCompile" Condition="'@(ProjectionMetadataWinmd)'==''">
 		<ItemGroup>
 			<ProjectionMetadataWinmd Include="$(UserProfile)\.nuget\packages\microsoft.windows.sdk.win32metadata\69.0.7-preview\Windows.Win32.winmd" />

@@ -413,7 +413,7 @@ public class Bootstrapper
         {
             return;
         }
-        if (Dialog is Control control)
+        if (Voidstrap.Utility.Platform.IsWindows && Dialog is Control control)
         {
             if (control.InvokeRequired)
             {
@@ -498,11 +498,15 @@ public class Bootstrapper
         });
     }
 
-    private void SetProgressStyle(ProgressBarStyle style)
+    private void SetProgressIndeterminate(bool indeterminate)
     {
+#if !CROSSPLAT
+        if (!Voidstrap.Utility.Platform.IsWindows)
+            return;
+#endif
         InvokeOnDialog(delegate
         {
-            Dialog!.ProgressStyle = style;
+            Dialog!.ProgressStyle = indeterminate ? ProgressBarStyle.Marquee : ProgressBarStyle.Continuous;
         });
     }
 
@@ -2614,6 +2618,8 @@ public class Bootstrapper
 
     private bool ShouldRunAsAdmin()
     {
+        if (!Voidstrap.Utility.Platform.IsWindows)
+            return false;
         foreach (RegistryKey root in WindowsRegistry.Roots)
         {
             using RegistryKey? registryKey = root.OpenSubKey("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers");
@@ -2630,6 +2636,8 @@ public class Bootstrapper
 
     private void MigrateCompatibilityFlags()
     {
+        if (!Voidstrap.Utility.Platform.IsWindows)
+            return;
         string text = Path.Combine(AppData.VersionsRoot, AppData.State.VersionGuid, AppData.ExecutableName);
         string text2 = Path.Combine(_latestVersionDirectory, AppData.ExecutableName);
         using RegistryKey registryKey = Registry.CurrentUser.CreateSubKey("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers");
@@ -2925,7 +2933,7 @@ public class Bootstrapper
             }
             if (Dialog != null)
             {
-                SetProgressStyle(ProgressBarStyle.Continuous);
+                SetProgressIndeterminate(false);
                 Dialog.TaskbarProgressState = TaskbarItemProgressState.Normal;
                 SetProgressMaximum(10000);
                 _progressIncrement = 10000.0 / (double)Math.Max(1L, totalPacked);
@@ -3005,7 +3013,7 @@ public class Bootstrapper
             }
             if (Dialog != null)
             {
-                SetProgressStyle(ProgressBarStyle.Marquee);
+                SetProgressIndeterminate(true);
                 Dialog.TaskbarProgressState = TaskbarItemProgressState.Indeterminate;
                 SetStatus(Strings.Bootstrapper_Status_Configuring);
             }
@@ -3062,8 +3070,11 @@ public class Bootstrapper
 				long installedKilobytes = installedBytes / 1024L;
 				AppData.State.Size = (int)Math.Clamp(installedKilobytes, 0L, int.MaxValue);
 				long combinedKilobytes = (long)(App.State.Prop.Player?.Size ?? 0) + (App.State.Prop.Studio?.Size ?? 0) + App.State.Prop.VngPlayer.Size;
-                using RegistryKey registryKey = Registry.CurrentUser.CreateSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Voidstrap");
-				registryKey?.SetValueSafe("EstimatedSize", (int)Math.Clamp(combinedKilobytes, 0L, int.MaxValue));
+                if (Voidstrap.Utility.Platform.IsWindows)
+                {
+                    using RegistryKey registryKey = Registry.CurrentUser.CreateSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Voidstrap");
+                    registryKey?.SetValueSafe("EstimatedSize", (int)Math.Clamp(combinedKilobytes, 0L, int.MaxValue));
+                }
             }
             catch (Exception ex3)
             {
@@ -5294,12 +5305,12 @@ public class Bootstrapper
         {
             if (total > 0)
             {
-                SetProgressStyle(ProgressBarStyle.Continuous);
+                SetProgressIndeterminate(false);
                 SetProgressMaximum(1000);
             }
             else
             {
-                SetProgressStyle(ProgressBarStyle.Marquee);
+                SetProgressIndeterminate(true);
             }
         }
         while (!ct.IsCancellationRequested)

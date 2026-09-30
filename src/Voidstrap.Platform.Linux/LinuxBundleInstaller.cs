@@ -180,6 +180,8 @@ public static partial class LinuxBundleInstaller
 
 	private static async Task ReplaceFileAsync(string sourcePath, string targetPath, Func<string, bool> isValid, CancellationToken cancellationToken)
 	{
+		if (!OperatingSystem.IsLinux())
+			throw new PlatformNotSupportedException();
 		string targetDirectory = Path.GetDirectoryName(targetPath) ?? throw new InvalidOperationException("The update folder is unavailable");
 		string stagedPath = targetPath + AppImageUpdateSuffix;
 		try

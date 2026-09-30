@@ -26,6 +26,8 @@ namespace Voidstrap.UI.ViewModels.Settings;
 
 public class BehaviourViewModel : NotifyPropertyChangedViewModel
 {
+	public NetworkMtuViewModel Mtu { get; } = new();
+
 	public sealed class ExcludedGameItem : NotifyPropertyChangedViewModel
 	{
 		private string _name;

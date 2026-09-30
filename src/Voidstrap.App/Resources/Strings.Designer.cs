@@ -5129,6 +5129,8 @@ namespace Voidstrap.Resources {
 
         public static string Vng_Confirmation => ResourceManager.GetString("Vng.Confirmation", resourceCulture);
 
+        public static string Vng_Agreement => ResourceManager.GetString("Vng.Agreement", resourceCulture);
+
         public static string Vng_Countdown => ResourceManager.GetString("Vng.Countdown", resourceCulture);
 
         public static string Vng_Title => ResourceManager.GetString("Vng.Title", resourceCulture);
@@ -5138,5 +5140,43 @@ namespace Voidstrap.Resources {
         public static string Vng_UseForLaunches => ResourceManager.GetString("Vng.UseForLaunches", resourceCulture);
 
         public static string Vng_UninstallWarning => ResourceManager.GetString("Vng.UninstallWarning", resourceCulture);
+
+        public static string Mtu_Title => ResourceManager.GetString("Mtu.Title", resourceCulture);
+
+        public static string Mtu_Description => ResourceManager.GetString("Mtu.Description", resourceCulture);
+
+        public static string Mtu_Adapter => ResourceManager.GetString("Mtu.Adapter", resourceCulture);
+
+        public static string Mtu_CustomValue => ResourceManager.GetString("Mtu.CustomValue", resourceCulture);
+
+        public static string Mtu_Current => ResourceManager.GetString("Mtu.Current", resourceCulture);
+
+        public static string Mtu_NoAdapters => ResourceManager.GetString("Mtu.NoAdapters", resourceCulture);
+
+        public static string Mtu_Invalid => ResourceManager.GetString("Mtu.Invalid", resourceCulture);
+
+        public static string Mtu_Apply => ResourceManager.GetString("Mtu.Apply", resourceCulture);
+
+        public static string Mtu_Restore => ResourceManager.GetString("Mtu.Restore", resourceCulture);
+
+        public static string Mtu_Refresh => ResourceManager.GetString("Mtu.Refresh", resourceCulture);
+
+        public static string Mtu_Loading => ResourceManager.GetString("Mtu.Loading", resourceCulture);
+
+        public static string Mtu_Applying => ResourceManager.GetString("Mtu.Applying", resourceCulture);
+
+        public static string Mtu_AdapterUnavailable => ResourceManager.GetString("Mtu.AdapterUnavailable", resourceCulture);
+
+        public static string Mtu_Rejected => ResourceManager.GetString("Mtu.Rejected", resourceCulture);
+
+        public static string Mtu_Applied => ResourceManager.GetString("Mtu.Applied", resourceCulture);
+
+        public static string Mtu_Restored => ResourceManager.GetString("Mtu.Restored", resourceCulture);
+
+        public static string Mtu_VerificationFailed => ResourceManager.GetString("Mtu.VerificationFailed", resourceCulture);
+
+        public static string Mtu_Cancelled => ResourceManager.GetString("Mtu.Cancelled", resourceCulture);
+
+        public static string Mtu_Error => ResourceManager.GetString("Mtu.Error", resourceCulture);
     }
 }

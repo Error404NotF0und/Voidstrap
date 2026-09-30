@@ -2038,6 +2038,11 @@ Continue only if you accept losing global app access for any account you use wit
   <data name="Vng.Confirmation" xml:space="preserve">
     <value>Are you sure?</value>
   </data>
+  <data name="Vng.Agreement" xml:space="preserve">
+    <value>Final warning: signing into Roblox VNG can permanently migrate your account and remove access to the global Roblox app. Voidstrap cannot reverse this.
+
+Type the exact phrase shown below to accept these restrictions and continue.</value>
+  </data>
   <data name="Vng.Countdown" xml:space="preserve">
     <value>{0} ({1}s)</value>
   </data>
@@ -2052,5 +2057,62 @@ Continue only if you accept losing global app access for any account you use wit
   </data>
   <data name="Vng.UninstallWarning" xml:space="preserve">
     <value>Removing VNG does not reverse an account migration or restore global app access.</value>
+  </data>
+  <data name="Mtu.Title" xml:space="preserve">
+    <value>MTU</value>
+  </data>
+  <data name="Mtu.Description" xml:space="preserve">
+    <value>Sets the adapter's packet size limit for all apps, including Roblox. Requires admin access and persists after restart. Lower MTU may not improve ping.</value>
+  </data>
+  <data name="Mtu.Adapter" xml:space="preserve">
+    <value>Select a network adapter and IP version</value>
+  </data>
+  <data name="Mtu.CustomValue" xml:space="preserve">
+    <value>Custom MTU (bytes)</value>
+  </data>
+  <data name="Mtu.Current" xml:space="preserve">
+    <value>Current: {0} bytes. Minimum: {1} bytes.</value>
+  </data>
+  <data name="Mtu.NoAdapters" xml:space="preserve">
+    <value>No supported network adapters found. Refresh to try again.</value>
+  </data>
+  <data name="Mtu.Invalid" xml:space="preserve">
+    <value>Enter a whole number from {0} to {1}. Windows also checks the adapter's supported packet size.</value>
+  </data>
+  <data name="Mtu.Apply" xml:space="preserve">
+    <value>Apply</value>
+  </data>
+  <data name="Mtu.Restore" xml:space="preserve">
+    <value>Restore</value>
+  </data>
+  <data name="Mtu.Refresh" xml:space="preserve">
+    <value>Refresh</value>
+  </data>
+  <data name="Mtu.Loading" xml:space="preserve">
+    <value>Reading Windows network adapters...</value>
+  </data>
+  <data name="Mtu.Applying" xml:space="preserve">
+    <value>Waiting for administrator approval and applying MTU...</value>
+  </data>
+  <data name="Mtu.AdapterUnavailable" xml:space="preserve">
+    <value>The selected adapter is unavailable. Refresh and choose an adapter.</value>
+  </data>
+  <data name="Mtu.Rejected" xml:space="preserve">
+    <value>Windows could not apply the MTU, code {0}. Your adapter may not support this value.</value>
+  </data>
+  <data name="Mtu.Applied" xml:space="preserve">
+    <value>MTU set to {0} bytes and verified. Applies to all apps on the selected adapter.</value>
+  </data>
+  <data name="Mtu.Restored" xml:space="preserve">
+    <value>Previous MTU restored to {0} bytes and verified.</value>
+  </data>
+  <data name="Mtu.VerificationFailed" xml:space="preserve">
+    <value>Windows did not report the requested MTU. Refresh to check the current value.</value>
+  </data>
+  <data name="Mtu.Cancelled" xml:space="preserve">
+    <value>Administrator request cancelled. The MTU was not changed.</value>
+  </data>
+  <data name="Mtu.Error" xml:space="preserve">
+    <value>MTU operation failed. Refresh to check the current value.</value>
   </data>
 </root>
