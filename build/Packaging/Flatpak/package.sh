@@ -75,5 +75,5 @@ fi
 
 "${BUILDER[@]}" --arch="$ARCH" --force-clean --disable-rofiles-fuse --user --install-deps-from=flathub --default-branch=stable --state-dir="$STAGE/state" --repo="$REPOSITORY" "$BUILD_DIRECTORY" "$MANIFEST"
 TARGET="$STAGE/Voidstrap_${VERSION}_${ARCH}.flatpak"
-flatpak build-bundle --arch="$ARCH" "$REPOSITORY" "$TARGET" "$APPLICATION_ID" stable
+flatpak build-bundle --arch="$ARCH" --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo "$REPOSITORY" "$TARGET" "$APPLICATION_ID" stable
 mv -n "$TARGET" "$FINAL_TARGET"
