@@ -496,7 +496,9 @@ public class RPCCustomizerViewModel : INotifyPropertyChanged, IDisposable
 			if (!Voidstrap.Integrations.DiscordIpc.TryFindPipe(out int pipe))
 			{
 				_reconnectTimer.IsEnabled = true;
-				SafeUpdateStatus("Waiting for Discord...", Brushes.Orange);
+				SafeUpdateStatus(!Voidstrap.Utility.Platform.IsWindows && Voidstrap.Integrations.DiscordIpc.IsDiscordClientRunning()
+					? "Waiting for Discord Rich Presence, turn on arRPC in modified clients like Vesktop"
+					: "Waiting for Discord...", Brushes.Orange);
 				return;
 			}
 			DiscordRpcClient discordRpcClient = Voidstrap.Integrations.DiscordIpc.CreateClient(ApplicationId, pipe, new Voidstrap.Integrations.DiscordRpcLogger("DiscordRichPresence::Customizer")

@@ -361,7 +361,7 @@ public sealed partial class LinuxRuntimeConfiguration
 			if (!settingsResult.Succeeded)
 				return settingsResult;
 
-			OperationResult flagsResult = await MergeVinegarFlagsAsync(configurationFile, flagManifestFile, cancellationToken).ConfigureAwait(false);
+			OperationResult flagsResult = await MergeVinegarFlagsAsync(configurationFile, flagManifestFile, options.UseFastFlagManager, cancellationToken).ConfigureAwait(false);
 			if (!flagsResult.Succeeded)
 				return flagsResult;
 
@@ -659,15 +659,23 @@ public sealed partial class LinuxRuntimeConfiguration
 		}
 	}
 
-	private async Task<OperationResult> MergeVinegarFlagsAsync(string configurationFile, string manifestFile, CancellationToken cancellationToken)
+	private async Task<OperationResult> MergeVinegarFlagsAsync(string configurationFile, string manifestFile, bool applyFlags, CancellationToken cancellationToken)
 	{
 		try
 		{
 			cancellationToken.ThrowIfCancellationRequested();
-			OperationResult<JsonObject> sourceResult = await ReadClientFlagsAsync(cancellationToken).ConfigureAwait(false);
-			if (!sourceResult.Succeeded || sourceResult.Value is null)
-				return OperationResult.Fail(sourceResult.Failure!.Code, sourceResult.Failure.Message, sourceResult.Failure.State);
-			JsonObject sourceFlags = sourceResult.Value;
+			JsonObject sourceFlags;
+			if (applyFlags)
+			{
+				OperationResult<JsonObject> sourceResult = await ReadClientFlagsAsync(cancellationToken).ConfigureAwait(false);
+				if (!sourceResult.Succeeded || sourceResult.Value is null)
+					return OperationResult.Fail(sourceResult.Failure!.Code, sourceResult.Failure.Message, sourceResult.Failure.State);
+				sourceFlags = sourceResult.Value;
+			}
+			else
+			{
+				sourceFlags = new JsonObject();
+			}
 			OperationResult initialManifestSafety = EnsureManifestSafety(manifestFile);
 			if (!initialManifestSafety.Succeeded)
 				return initialManifestSafety;

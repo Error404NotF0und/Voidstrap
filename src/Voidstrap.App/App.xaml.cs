@@ -784,6 +784,7 @@ public partial class App : Application
 		TryStartup("Focus style", DisableFocusVisuals);
 		TryStartup("Portable popups", EmbedPortablePopups);
 		TryStartup("Portable tooltips", DisablePortableToolTips);
+		TryStartup("Tooltip placement", InstallPortableToolTipPlacement);
 		TryStartup("Locale", Locale.Initialize);
 		TryStartup("Icon font", Voidstrap.Utility.IconFontLoader.Install);
 		TryStartup("Rounded window chrome", Voidstrap.UI.RoundedWindowChrome.Install);
@@ -1517,11 +1518,7 @@ public partial class App : Application
 			{
 				EventManager.RegisterClassHandler(typeof(System.Windows.Controls.Image), FrameworkElement.LoadedEvent, new RoutedEventHandler(ApplyLinuxImageScaling));
 			});
-			TryStartup("Linux tooltip placement", () =>
-			{
-				EventManager.RegisterClassHandler(typeof(FrameworkElement), FrameworkElement.ToolTipOpeningEvent, new System.Windows.Controls.ToolTipEventHandler(ApplyLinuxToolTipPlacement), true);
-				EventManager.RegisterClassHandler(typeof(FrameworkContentElement), FrameworkContentElement.ToolTipOpeningEvent, new System.Windows.Controls.ToolTipEventHandler(ApplyLinuxToolTipPlacement), true);
-			});
+			TryStartup("Linux tooltip placement", InstallPortableToolTipPlacement);
 		}
 		if (Voidstrap.Utility.Platform.IsLinux)
 		{
@@ -1608,6 +1605,17 @@ public partial class App : Application
 
 	private const double LinuxToolTipCursorHeight = 20.0;
 
+	private static bool _portableToolTipPlacementInstalled;
+
+	private static void InstallPortableToolTipPlacement()
+	{
+		if (Voidstrap.Utility.Platform.IsWindows || _portableToolTipPlacementInstalled)
+			return;
+		_portableToolTipPlacementInstalled = true;
+		EventManager.RegisterClassHandler(typeof(FrameworkElement), FrameworkElement.ToolTipOpeningEvent, new System.Windows.Controls.ToolTipEventHandler(ApplyLinuxToolTipPlacement), true);
+		EventManager.RegisterClassHandler(typeof(FrameworkContentElement), FrameworkContentElement.ToolTipOpeningEvent, new System.Windows.Controls.ToolTipEventHandler(ApplyLinuxToolTipPlacement), true);
+	}
+
 	private sealed class LinuxToolTipAnchor
 	{
 		public double HorizontalOffset;
@@ -1658,6 +1666,15 @@ public partial class App : Application
 		System.Windows.Controls.ToolTipService.SetPlacementRectangle(owner, new Rect(cursor.X, cursor.Y, 1.0, anchor.AtCursorPoint ? 1.0 : LinuxToolTipCursorHeight));
 		System.Windows.Controls.ToolTipService.SetHorizontalOffset(owner, anchor.HorizontalOffset);
 		System.Windows.Controls.ToolTipService.SetVerticalOffset(owner, anchor.VerticalOffset);
+		object? content = owner is FrameworkElement element ? element.ToolTip : owner is FrameworkContentElement contentElement ? contentElement.ToolTip : null;
+		if (content is System.Windows.Controls.ToolTip toolTip
+			&& toolTip.ReadLocalValue(System.Windows.Controls.ToolTip.PlacementProperty) is System.Windows.Controls.Primitives.PlacementMode localPlacement
+			&& localPlacement is System.Windows.Controls.Primitives.PlacementMode.Mouse or System.Windows.Controls.Primitives.PlacementMode.MousePoint)
+		{
+			toolTip.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+			toolTip.PlacementTarget = target;
+			toolTip.PlacementRectangle = new Rect(cursor.X, cursor.Y, 1.0, localPlacement == System.Windows.Controls.Primitives.PlacementMode.MousePoint ? 1.0 : LinuxToolTipCursorHeight);
+		}
 	}
 
 	private static UIElement? FindToolTipHost(DependencyObject element)

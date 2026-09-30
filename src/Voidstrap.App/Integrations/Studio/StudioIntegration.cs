@@ -12,16 +12,21 @@ namespace Voidstrap.Integrations.Studio
 
         private static StudioRichPresence? _rpc;
 
-        public static void Start()
+        public static void Start(bool studioSession = false)
         {
             try
             {
                 LaunchSettings launchSettings = App.LaunchSettings;
-                if (launchSettings == null || launchSettings.RobloxLaunchMode != LaunchMode.Studio)
+                if (!studioSession && (launchSettings == null || launchSettings.RobloxLaunchMode != LaunchMode.Studio))
                 {
                     return;
                 }
                 StudioPluginInstaller.RestoreAfterClassicClient();
+                if (Voidstrap.Utility.Platform.IsLinux)
+                {
+                    StartLinux();
+                    return;
+                }
                 if (!App.Settings.Prop.StudioPluginEnabled)
                 {
                     return;
@@ -41,6 +46,25 @@ namespace Voidstrap.Integrations.Studio
             {
                 App.Logger.WriteLine(LogTag, "Start failed: " + ex.Message);
             }
+        }
+
+        private static void StartLinux()
+        {
+            bool plugin = App.Settings.Prop.StudioPluginEnabled;
+            bool presence = App.Settings.Prop.UseDiscordRichPresence;
+            lock (_lock)
+            {
+                if (plugin)
+                {
+                    StudioBridge.Start();
+                    StudioPluginInstaller.EnsureInstalled(force: true);
+                }
+                if (presence && _rpc == null)
+                {
+                    _rpc = new StudioRichPresence();
+                }
+            }
+            App.Logger.WriteLine(LogTag, "Studio integration started for Vinegar, presence " + (presence ? "on" : "off") + ", plugin " + (plugin ? "on" : "off"));
         }
 
         public static void Shutdown()

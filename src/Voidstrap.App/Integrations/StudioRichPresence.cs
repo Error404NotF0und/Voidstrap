@@ -47,6 +47,11 @@ public sealed partial class StudioRichPresence : IDisposable
 	private string _lastLogPath = "";
 	private DateTime _lastLogWriteUtc;
 	private LogState _lastLogState = new();
+	private readonly StudioLogTracker _linuxLog = new();
+	private string _creator = "";
+	private long _namedUniverse;
+	private int _nameFetching;
+	private string _sessionKey = "";
 
 	private sealed record LogState(long PlaceId = 0, long UniverseId = 0, int ScriptLines = 0);
 
@@ -161,9 +166,21 @@ public sealed partial class StudioRichPresence : IDisposable
 			_sessionStart = DateTime.UtcNow;
 			App.Logger.WriteLine(LogTag, "Roblox Studio detected");
 		}
-		ReadWindowState(studio);
-		ReadLogState();
+		if (Voidstrap.Utility.Platform.IsLinux)
+		{
+			ReadLinuxState();
+		}
+		else
+		{
+			ReadWindowState(studio);
+			ReadLogState();
+		}
 		ApplyPluginState();
+		if (Voidstrap.Utility.Platform.IsLinux)
+		{
+			EnsurePlaceName();
+			TrackPlaceSession();
+		}
 		EnsureIcon();
 		EnsureClient();
 		UpdatePresence();
@@ -183,7 +200,11 @@ public sealed partial class StudioRichPresence : IDisposable
 		_scriptLines = 0;
 		_mode = "";
 		_iconUrl = "";
+		_creator = "";
+		_namedUniverse = 0;
+		_sessionKey = "";
 		_lastSignature = "";
+		_linuxLog.Reset();
 		App.Logger.WriteLine(LogTag, "Roblox Studio closed");
 		try
 		{
@@ -263,6 +284,114 @@ public sealed partial class StudioRichPresence : IDisposable
 			_place = meaningful[^1];
 		}
 		_script = meaningful.Count > 1 ? meaningful[0] : "";
+	}
+
+	private void ReadLinuxState()
+	{
+		try
+		{
+			FileInfo? latest = Voidstrap.Utility.VinegarPaths.LogDirectories
+				.Where(Directory.Exists)
+				.SelectMany(directory => new DirectoryInfo(directory).EnumerateFiles("*.log"))
+				.Where(file => file.Name.Contains("Studio", StringComparison.OrdinalIgnoreCase))
+				.OrderByDescending(file => file.LastWriteTimeUtc)
+				.FirstOrDefault();
+			if (latest != null)
+			{
+				_linuxLog.Update(latest.FullName);
+			}
+		}
+		catch (Exception ex)
+		{
+			App.Logger.WriteLine(LogTag, "The Studio log could not be read: " + ex.Message);
+		}
+
+		string title = Voidstrap.Platform.Linux.LinuxWindowInterop.FindStudioWindowTitle();
+		string cleaned = StudioTitleSuffixPattern.Replace(title, "").Trim();
+		if (string.Equals(cleaned, "Roblox Studio", StringComparison.OrdinalIgnoreCase))
+		{
+			cleaned = "";
+		}
+		string[] parts = cleaned.Split([" - ", " – ", " — "], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+		List<string> meaningful = parts.Where(part => !IsModeText(part)).ToList();
+		string titleMode = ResolveMode(title);
+
+		if (!_linuxLog.DocumentOpen && _linuxLog.HasEvents)
+		{
+			_place = "";
+			_script = "";
+			_placeId = 0;
+			_universeId = 0;
+			_mode = "";
+			return;
+		}
+
+		_placeId = _linuxLog.PlaceId;
+		_universeId = _linuxLog.UniverseId;
+		_place = meaningful.Count > 0 ? meaningful[^1] : _namedUniverse == _universeId && _universeId > 0 ? _place : "";
+		_script = meaningful.Count > 1 ? meaningful[0] : "";
+		_mode = titleMode.Length > 0 ? titleMode : _linuxLog.Mode;
+	}
+
+	private void EnsurePlaceName()
+	{
+		long universeId = _universeId;
+		if (universeId <= 0 || _namedUniverse == universeId || Interlocked.CompareExchange(ref _nameFetching, 1, 0) != 0)
+		{
+			return;
+		}
+		_ = FetchPlaceNameAsync(universeId, _lifetimeToken);
+	}
+
+	private async Task FetchPlaceNameAsync(long universeId, CancellationToken token)
+	{
+		try
+		{
+			if (Voidstrap.Models.Entities.UniverseDetails.LoadFromCache(universeId) == null)
+			{
+				await Voidstrap.Models.Entities.UniverseDetails.FetchSingle(universeId, token).ConfigureAwait(false);
+			}
+			Voidstrap.Models.Entities.UniverseDetails? details = Voidstrap.Models.Entities.UniverseDetails.LoadFromCache(universeId);
+			if (_disposed || universeId != _universeId)
+			{
+				return;
+			}
+			_namedUniverse = universeId;
+			_creator = details?.Data?.Creator?.Name ?? "";
+			if (string.IsNullOrWhiteSpace(_place) && !string.IsNullOrWhiteSpace(details?.Data?.Name))
+			{
+				_place = details.Data.Name;
+			}
+			UpdatePresence();
+		}
+		catch (OperationCanceledException) when (token.IsCancellationRequested)
+		{
+		}
+		catch (Exception ex)
+		{
+			App.Logger.WriteLine(LogTag, "The place name could not be fetched: " + ex.Message);
+		}
+		finally
+		{
+			Interlocked.Exchange(ref _nameFetching, 0);
+		}
+	}
+
+	private void TrackPlaceSession()
+	{
+		string key = _placeId + ":" + (_linuxLog.DocumentOpen ? _mode : "start");
+		if (key == _sessionKey)
+		{
+			return;
+		}
+		if (_sessionKey.Length > 0)
+		{
+			_sessionStart = DateTime.UtcNow;
+		}
+		_sessionKey = key;
+		App.Logger.WriteLine(LogTag, _linuxLog.DocumentOpen && _placeId > 0
+			? "Studio is " + (_mode.Length > 0 ? _mode.ToLowerInvariant() : "editing") + " place " + _placeId + (_universeId > 0 ? " in universe " + _universeId : "")
+			: "Studio is on the start page");
 	}
 
 	private void ApplyPluginState()
@@ -483,6 +612,12 @@ public sealed partial class StudioRichPresence : IDisposable
 		var settings = App.Settings.Prop;
 		bool showPlace = settings.StudioRpcShowPlace && !string.IsNullOrWhiteSpace(_place);
 		string details = showPlace ? FormatActivity(_mode, _place) : "In Roblox Studio";
+		bool linux = Voidstrap.Utility.Platform.IsLinux;
+		bool startPage = linux && _linuxLog.HasEvents && !_linuxLog.DocumentOpen;
+		if (linux && showPlace && _creator.Length > 0)
+		{
+			details += " \u00b7 by " + _creator;
+		}
 		List<string> parts = [];
 		if (settings.StudioRpcShowState && _mode.Length > 0 && !details.Contains(_mode, StringComparison.OrdinalIgnoreCase))
 		{
@@ -494,7 +629,11 @@ public sealed partial class StudioRichPresence : IDisposable
 		}
 		if (parts.Count == 0)
 		{
-			parts.Add(_script.Length == 0 ? "Editing UI" : "In Roblox Studio");
+			parts.Add(startPage
+				? "On the start page"
+				: linux
+					? _mode == "Playtesting" || _mode == "Testing" ? "Testing the experience" : "Building the experience"
+					: _script.Length == 0 ? "Editing UI" : "In Roblox Studio");
 		}
 		string state = string.Join(", ", parts);
 		string largeImage = showPlace && _iconUrl.Length > 0 ? _iconUrl : StudioIconUrl;
@@ -524,7 +663,7 @@ public sealed partial class StudioRichPresence : IDisposable
 					LargeImageKey = largeImage,
 					LargeImageText = Trim(largeText, 128),
 					SmallImageKey = StudioIconUrl,
-					SmallImageText = "Roblox Studio"
+					SmallImageText = linux && _linuxLog.Version.Length > 0 ? "Roblox Studio " + _linuxLog.Version + " on Linux" : "Roblox Studio"
 				},
 				Buttons = buttons.ToArray()
 			});
@@ -576,6 +715,153 @@ public sealed partial class StudioRichPresence : IDisposable
 		_lifetimeCancellation.Dispose();
 		_pollTimer = null;
 		GC.SuppressFinalize(this);
+	}
+
+	private sealed partial class StudioLogTracker
+	{
+		private const long MaxReadBytes = 16L * 1024 * 1024;
+
+		[GeneratedRegex(@"DmId: [0-9A-Fa-f-]+-(\d{3,19})-StudioGameStateType_(\w+)")]
+		private static partial Regex DataModelIdPattern { get; }
+
+		[GeneratedRegex(@"(?:Joining|continuing to open) universeId (\d{1,19})")]
+		private static partial Regex OpenUniversePattern { get; }
+
+		[GeneratedRegex(@"(Setting up|Tearing down) for DataModel (\w+)")]
+		private static partial Regex DataModelLifecyclePattern { get; }
+
+		[GeneratedRegex(@"^(\d+\.\d+)\.")]
+		private static partial Regex VersionPattern { get; }
+
+		private readonly HashSet<string> _dataModels = new(StringComparer.Ordinal);
+		private string _path = "";
+		private long _offset;
+		private string _pending = "";
+
+		public long PlaceId { get; private set; }
+
+		public long UniverseId { get; private set; }
+
+		public bool DocumentOpen { get; private set; }
+
+		public bool HasEvents { get; private set; }
+
+		public string Version { get; private set; } = "";
+
+		public string Mode
+		{
+			get
+			{
+				if (_dataModels.Any(static model => !model.Equals("Edit", StringComparison.Ordinal) && !model.Equals("Standalone", StringComparison.Ordinal)))
+				{
+					return "Playtesting";
+				}
+				return _dataModels.Contains("Edit") ? "Editing" : "";
+			}
+		}
+
+		public void Reset()
+		{
+			_path = "";
+			_offset = 0;
+			_pending = "";
+			_dataModels.Clear();
+			PlaceId = 0;
+			UniverseId = 0;
+			DocumentOpen = false;
+			HasEvents = false;
+			Version = "";
+		}
+
+		public void Update(string path)
+		{
+			if (!string.Equals(path, _path, StringComparison.Ordinal))
+			{
+				Reset();
+				_path = path;
+				Match version = VersionPattern.Match(Path.GetFileName(path));
+				Version = version.Success ? version.Groups[1].Value : "";
+			}
+
+			using FileStream stream = new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+			if (stream.Length < _offset)
+			{
+				string current = _path;
+				Reset();
+				_path = current;
+			}
+			if (stream.Length == _offset)
+			{
+				return;
+			}
+			long start = Math.Max(_offset, stream.Length - MaxReadBytes);
+			stream.Seek(start, SeekOrigin.Begin);
+			byte[] buffer = new byte[stream.Length - start];
+			int read = stream.ReadAtLeast(buffer, buffer.Length, false);
+			_offset = start + read;
+			string text = _pending + System.Text.Encoding.UTF8.GetString(buffer, 0, read);
+			int end = text.LastIndexOf('\n');
+			if (end < 0)
+			{
+				_pending = text;
+				return;
+			}
+			_pending = text[(end + 1)..];
+			foreach (string line in text[..end].Split('\n'))
+			{
+				ParseLine(line);
+			}
+		}
+
+		private void ParseLine(string line)
+		{
+			if (line.Contains("createAndShowIDEDoc", StringComparison.Ordinal))
+			{
+				DocumentOpen = true;
+				HasEvents = true;
+				PlaceId = 0;
+				UniverseId = 0;
+				return;
+			}
+			if (line.Contains("RobloxIDEDoc::doClose", StringComparison.Ordinal) || line.Contains("close IDE doc", StringComparison.Ordinal))
+			{
+				DocumentOpen = false;
+				HasEvents = true;
+				PlaceId = 0;
+				UniverseId = 0;
+				_dataModels.RemoveWhere(static model => !model.Equals("Standalone", StringComparison.Ordinal));
+				return;
+			}
+			Match lifecycle = DataModelLifecyclePattern.Match(line);
+			if (lifecycle.Success)
+			{
+				HasEvents = true;
+				if (lifecycle.Groups[1].Value == "Setting up")
+				{
+					_dataModels.Add(lifecycle.Groups[2].Value);
+				}
+				else
+				{
+					_dataModels.Remove(lifecycle.Groups[2].Value);
+				}
+				return;
+			}
+			if (!DocumentOpen)
+			{
+				return;
+			}
+			Match model = DataModelIdPattern.Match(line);
+			if (model.Success && long.TryParse(model.Groups[1].Value, out long placeId) && placeId > 0)
+			{
+				PlaceId = placeId;
+				return;
+			}
+			Match universe = OpenUniversePattern.Match(line);
+			if (universe.Success && long.TryParse(universe.Groups[1].Value, out long universeId) && universeId > 0)
+			{
+				UniverseId = universeId;
+			}
+		}
 	}
 
     [GeneratedRegex(@"\bplaceId\b[^0-9]{0,12}(\d{1,19})", RegexOptions.IgnoreCase, "en-US")]

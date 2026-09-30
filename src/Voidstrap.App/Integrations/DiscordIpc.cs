@@ -2,8 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Sockets;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using DiscordRPC;
+using DiscordRPC.IO;
 using DiscordRPC.Logging;
 
 namespace Voidstrap.Integrations;
@@ -59,27 +62,189 @@ internal static class DiscordIpc
 		"snap.discord"
 	};
 
+	private static readonly string[] ClientNames =
+	{
+		"discord",
+		"vesktop",
+		"vencord",
+		"equibop",
+		"equicord",
+		"legcord",
+		"armcord",
+		"webcord",
+		"goofcord",
+		"dorion",
+		"abaddon",
+		"discord-screenaudio"
+	};
+
+	private static readonly MethodInfo? AttemptConnectionMethod = typeof(ManagedNamedPipeClient).GetMethod("AttemptConnection", BindingFlags.NonPublic | BindingFlags.Instance, null, new[] { typeof(string) }, null);
+
+	private static readonly MethodInfo? BeginReadStreamMethod = typeof(ManagedNamedPipeClient).GetMethod("BeginReadStream", BindingFlags.NonPublic | BindingFlags.Instance, null, Type.EmptyTypes, null);
+
+	internal const string ClientWithoutRichPresenceMessage = "Discord is running, but Voidstrap could not reach its Rich Presence connection. If you use Vesktop, Equibop or another modified client, turn on its Rich Presence (arRPC) option, then try again.";
+
+	internal static string MissingPipeMessage => !Voidstrap.Utility.Platform.IsWindows && IsDiscordClientRunning()
+		? ClientWithoutRichPresenceMessage
+		: "Discord is not running.";
+
 	internal static bool TryFindPipe(out int pipe)
 	{
 		if (Voidstrap.Utility.Platform.IsWindows)
 			return TryFindPipeIn(@"\\.\pipe\", out pipe);
 
-		List<string> directories = new List<string>();
-		HashSet<string> unique = new HashSet<string>(StringComparer.Ordinal);
-		AddRoot(directories, unique, Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR"));
-		AddRoot(directories, unique, Environment.GetEnvironmentVariable("TMPDIR"));
-		AddRoot(directories, unique, Environment.GetEnvironmentVariable("TMP"));
-		AddRoot(directories, unique, Environment.GetEnvironmentVariable("TEMP"));
-		AddRoot(directories, unique, Path.GetTempPath());
-		AddRoot(directories, unique, "/tmp");
-
-		foreach (string directory in directories)
+		foreach (string socket in FindUnixSockets(-1))
 		{
-			if (TryFindPipeIn(directory, out pipe))
+			if (TryParsePipe(Path.GetFileName(socket), out pipe))
 				return true;
 		}
 
 		pipe = -1;
+		return false;
+	}
+
+	internal static IEnumerable<string> FindUnixSockets(int pipe)
+	{
+		foreach (string directory in UnixSocketDirectories())
+		{
+			for (int candidate = 0; candidate <= 9; candidate++)
+			{
+				if (pipe >= 0 && candidate != pipe)
+					continue;
+				string path = Path.Combine(directory, "discord-ipc-" + candidate);
+				if (IsListening(path))
+					yield return path;
+			}
+		}
+	}
+
+	internal static bool TryConnectPath(ManagedNamedPipeClient client, string path)
+	{
+		if (AttemptConnectionMethod is null || BeginReadStreamMethod is null)
+			return false;
+		try
+		{
+			if (AttemptConnectionMethod.Invoke(client, new object[] { path }) is true)
+			{
+				BeginReadStreamMethod.Invoke(client, null);
+				return true;
+			}
+		}
+		catch (Exception ex) when (ex is not OutOfMemoryException)
+		{
+		}
+		return false;
+	}
+
+	private static List<string> UnixSocketDirectories()
+	{
+		List<string> directories = new List<string>();
+		HashSet<string> unique = new HashSet<string>(StringComparer.Ordinal);
+		string?[] roots =
+		{
+			Environment.GetEnvironmentVariable("XDG_RUNTIME_DIR"),
+			Environment.GetEnvironmentVariable("TMPDIR"),
+			Environment.GetEnvironmentVariable("TMP"),
+			Environment.GetEnvironmentVariable("TEMP"),
+			Path.GetTempPath(),
+			"/tmp"
+		};
+		foreach (string? root in roots)
+			AddRoot(directories, unique, root);
+		foreach (string? root in roots)
+			AddSandboxRoots(directories, unique, root);
+		return directories;
+	}
+
+	private static void AddSandboxRoots(List<string> directories, HashSet<string> unique, string? root)
+	{
+		if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+			return;
+
+		foreach ((string parent, string suffix) in new[] { ("app", ""), (".flatpak", "xdg-run") })
+		{
+			try
+			{
+				string container = Path.Combine(root, parent);
+				if (!Directory.Exists(container))
+					continue;
+				foreach (string application in Directory.EnumerateDirectories(container).Order(StringComparer.Ordinal))
+					AddDirectory(directories, unique, suffix.Length == 0 ? application : Path.Combine(application, suffix));
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			{
+			}
+		}
+
+		try
+		{
+			foreach (string snap in Directory.EnumerateDirectories(root, "snap.*").Order(StringComparer.Ordinal))
+				AddDirectory(directories, unique, snap);
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+		}
+	}
+
+	private static bool IsListening(string path)
+	{
+		try
+		{
+			if (!File.Exists(path))
+				return false;
+			using Socket socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+			socket.Connect(new UnixDomainSocketEndPoint(path));
+			return true;
+		}
+		catch (Exception ex) when (ex is SocketException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+		{
+			return false;
+		}
+	}
+
+	private static bool TryParsePipe(string name, out int pipe)
+	{
+		pipe = -1;
+		return name.Length == 13
+			&& name.StartsWith("discord-ipc-", StringComparison.Ordinal)
+			&& int.TryParse(name.AsSpan(12), out pipe)
+			&& pipe is >= 0 and <= 9;
+	}
+
+	internal static bool IsDiscordClientRunning()
+	{
+		string[] processes;
+		try
+		{
+			processes = Directory.GetDirectories("/proc");
+		}
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		{
+			return false;
+		}
+
+		foreach (string directory in processes)
+		{
+			string id = Path.GetFileName(directory);
+			if (id.Length == 0 || !char.IsAsciiDigit(id[0]) || id == Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture))
+				continue;
+			try
+			{
+				string command = File.ReadAllText(Path.Combine(directory, "cmdline"));
+				int end = command.IndexOf('\0');
+				string program = Path.GetFileName(end < 0 ? command : command[..end]).ToLowerInvariant();
+				if (program.Length > 0 && ClientNames.Any(name => program.Contains(name, StringComparison.Ordinal)))
+					return true;
+
+				string group = File.ReadAllText(Path.Combine(directory, "cgroup")).ToLowerInvariant();
+				if (group.Contains("app-flatpak-", StringComparison.Ordinal) && ClientNames.Any(name => group.Contains(name, StringComparison.Ordinal)))
+					return true;
+			}
+			catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+			{
+			}
+		}
+
 		return false;
 	}
 

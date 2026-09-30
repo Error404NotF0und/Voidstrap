@@ -828,10 +828,11 @@ public partial class MusicPlayerViewModel : INotifyPropertyChanged, IDisposable
             DisconnectRpcClient();
             if (!Voidstrap.Integrations.DiscordIpc.TryFindPipe(out int pipe))
             {
-                Status = "Discord is not running.";
+                string missing = Voidstrap.Integrations.DiscordIpc.MissingPipeMessage;
+                Status = missing;
                 OnPropertyChanged(nameof(RpcButtonLabel));
                 if (!isAutoReconnect)
-                    Frontend.ShowMessageBox("Discord is not running.");
+                    Frontend.ShowMessageBox(missing);
                 return;
             }
             _showRpcConnectedMessage = !isAutoReconnect;

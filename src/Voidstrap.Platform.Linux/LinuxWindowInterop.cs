@@ -437,9 +437,46 @@ public static partial class LinuxWindowInterop
 		}
 	}
 
+	private static bool IsStudioWindow(string name, string className, string title)
+	{
+		return name.Contains("studio", StringComparison.OrdinalIgnoreCase)
+			|| className.Contains("studio", StringComparison.OrdinalIgnoreCase)
+			|| name.Contains("org.vinegarhq.vinegar", StringComparison.OrdinalIgnoreCase)
+			|| className.Contains("org.vinegarhq.vinegar", StringComparison.OrdinalIgnoreCase)
+			|| title.EndsWith("Roblox Studio", StringComparison.OrdinalIgnoreCase);
+	}
+
+	public static string FindStudioWindowTitle()
+	{
+		nint display = Display;
+		if (display == 0)
+			return string.Empty;
+		try
+		{
+			foreach (nint window in EnumerateClientWindows(display))
+			{
+				string title = GetWindowTitle(display, window);
+				if (!title.EndsWith("Roblox Studio", StringComparison.OrdinalIgnoreCase))
+					continue;
+				if (TryGetClassHint(display, window, out string name, out string className)
+					&& (name.Contains("vinegar", StringComparison.OrdinalIgnoreCase) && !name.Contains("studio", StringComparison.OrdinalIgnoreCase)
+						|| className.Contains("voidstrap", StringComparison.OrdinalIgnoreCase)))
+					continue;
+				return title;
+			}
+		}
+		catch (Exception)
+		{
+		}
+		return string.Empty;
+	}
+
 	private static bool IsSoberWindow(nint display, nint window)
 	{
-		if (TryGetClassHint(display, window, out string name, out string className)
+		bool hasClass = TryGetClassHint(display, window, out string name, out string className);
+		if (hasClass && IsStudioWindow(name, className, GetWindowTitle(display, window)))
+			return false;
+		if (hasClass
 			&& (name.Contains("sober", StringComparison.OrdinalIgnoreCase)
 				|| className.Contains("sober", StringComparison.OrdinalIgnoreCase)
 				|| name.Contains("vinegar", StringComparison.OrdinalIgnoreCase)
@@ -2285,6 +2322,36 @@ public static partial class LinuxWindowInterop
 		}
 	}
 
+	public static bool TryGetPointerInWindow(nint window, out int x, out int y, out bool buttonsHeld)
+	{
+		x = 0;
+		y = 0;
+		buttonsHeld = false;
+		nint display = Display;
+		if (display == 0 || window == 0)
+			return false;
+
+		try
+		{
+			if (XQueryPointer(display, window, out _, out _, out _, out _, out int windowX, out int windowY, out uint mask) == 0)
+				return false;
+			x = windowX;
+			y = windowY;
+			buttonsHeld = (mask & PointerButtonMask) != 0;
+			return true;
+		}
+		catch (DllNotFoundException)
+		{
+			return false;
+		}
+		catch (EntryPointNotFoundException)
+		{
+			return false;
+		}
+	}
+
+	private const uint PointerButtonMask = 0x1F00;
+
 	public static bool TryResetInputShape(nint window)
 	{
 		nint display = Display;
@@ -3293,8 +3360,11 @@ public static partial class LinuxWindowInterop
 
 	private static bool IsRuntimeWindow(nint display, nint window)
 	{
+		string windowTitle = GetWindowTitle(display, window);
 		if (TryGetClassHint(display, window, out string name, out string className))
 		{
+			if (IsStudioWindow(name, className, windowTitle))
+				return false;
 			foreach (string marker in RuntimeClassMarkers)
 			{
 				if (name.Contains(marker, StringComparison.OrdinalIgnoreCase)
@@ -3303,9 +3373,10 @@ public static partial class LinuxWindowInterop
 			}
 		}
 
-		string title = GetWindowTitle(display, window);
-		if (!title.Contains("Roblox", StringComparison.OrdinalIgnoreCase)
-			&& !title.Contains("Sober", StringComparison.OrdinalIgnoreCase))
+		if (windowTitle.EndsWith("Roblox Studio", StringComparison.OrdinalIgnoreCase))
+			return false;
+		if (!windowTitle.Contains("Roblox", StringComparison.OrdinalIgnoreCase)
+			&& !windowTitle.Contains("Sober", StringComparison.OrdinalIgnoreCase))
 			return false;
 		return IsSoberWindowProcess(display, window);
 	}

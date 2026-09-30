@@ -4079,6 +4079,54 @@ public class Bootstrapper
     }
 
 
+    internal async Task PrepareLinuxStudioLaunchAsync(CancellationToken cancellationToken)
+    {
+        const string logIdent = "Bootstrapper::PrepareLinuxStudioLaunch";
+        try
+        {
+            App.FastFlags.Save();
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteLine(logIdent, "Fast flags could not be written before launch: " + ex.Message);
+        }
+
+        if (!ModsAllowedForThisLaunch())
+        {
+            App.Logger.WriteLine(logIdent, $"Mods are set to {App.Settings.Prop.ModApplyTarget}, so this Studio launch runs unmodded. Mod files are kept on disk.");
+            return;
+        }
+
+        SetStatus(Strings.Bootstrapper_Status_ApplyingModifications);
+        Directory.CreateDirectory(Paths.Mods);
+
+        try
+        {
+            await ApplySkyboxModifications(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteLine(logIdent, "Skybox could not be applied: " + ex.Message);
+        }
+
+        RepairFlattenedModNames();
+        RepairModRootCase();
+        try
+        {
+            CursorManager.ApplyOnLaunch();
+        }
+        catch (Exception ex)
+        {
+            App.Logger.WriteLine(logIdent, "Cursors could not be applied: " + ex.Message);
+        }
+
+        App.Logger.WriteLine(logIdent, "Studio modifications are ready for Vinegar");
+    }
+
     internal async Task PrepareLinuxLaunchAsync(CancellationToken cancellationToken)
     {
         const string logIdent = "Bootstrapper::PrepareLinuxLaunch";

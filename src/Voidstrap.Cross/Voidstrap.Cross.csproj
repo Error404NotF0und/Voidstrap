@@ -35,6 +35,14 @@
 		<LinuxWgpuLibrary>$(MSBuildProjectDirectory)\..\..\external\LibreWPF\$(RuntimeIdentifier)\libwgpu_native.so</LinuxWgpuLibrary>
 	</PropertyGroup>
 
+	<ItemGroup Condition="$(RuntimeIdentifier.StartsWith('linux')) And Exists('$(MSBuildProjectDirectory)\..\..\external\LibreWPF\$(RuntimeIdentifier)\libwgpu_native_gl.so')">
+		<None Include="$(MSBuildProjectDirectory)\..\..\external\LibreWPF\$(RuntimeIdentifier)\libwgpu_native_gl.so">
+			<Link>libwgpu_native_gl.so</Link>
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+		</None>
+	</ItemGroup>
+
 	<ItemGroup Condition="$(RuntimeIdentifier.StartsWith('linux'))">
 		<None Include="$(MSBuildProjectDirectory)\..\..\external\LibreWPF\libvoidstrapeditorcompat.so">
 			<Link>libvoidstrapeditorcompat.so</Link>

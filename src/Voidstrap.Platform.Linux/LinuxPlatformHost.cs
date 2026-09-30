@@ -1005,14 +1005,14 @@ public sealed partial class LinuxSoberRuntimeProvider : IRobloxRuntimeProvider
 	private static async Task<bool> WaitForSoberStoppedAsync(CancellationToken cancellationToken)
 	{
 		using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-		timeout.CancelAfter(TimeSpan.FromSeconds(8));
+		timeout.CancelAfter(TimeSpan.FromSeconds(15));
 		int stoppedChecks = 0;
 
 		try
 		{
 			while (!timeout.IsCancellationRequested)
 			{
-				if (await IsSoberRunningAsync(timeout.Token).ConfigureAwait(false))
+				if (IsSoberInstanceLocked() || await IsSoberRunningAsync(timeout.Token).ConfigureAwait(false))
 				{
 					stoppedChecks = 0;
 				}
@@ -1032,7 +1032,122 @@ public sealed partial class LinuxSoberRuntimeProvider : IRobloxRuntimeProvider
 		return false;
 	}
 
-	private static async Task<bool> WaitForSoberStartedAsync(CancellationToken cancellationToken)
+	private const string SoberInstanceRunningMessage = "An instance of Sober is already running";
+
+	[StructLayout(LayoutKind.Explicit, Size = 256)]
+	private struct SoberPackageStatus
+	{
+		[FieldOffset(32)]
+		public ulong Inode;
+
+		[FieldOffset(136)]
+		public uint DeviceMajor;
+
+		[FieldOffset(140)]
+		public uint DeviceMinor;
+	}
+
+	[LibraryImport("libc", EntryPoint = "statx", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
+	private static partial int GetSoberPackageStatus(int directoryFileDescriptor, string path, int flags, uint mask, out SoberPackageStatus status);
+
+	private const int CurrentDirectoryDescriptor = -100;
+
+	private const uint StatusInodeMask = 0x100;
+
+	private static List<int> SoberInstanceLockOwners()
+	{
+		List<int> owners = [];
+		try
+		{
+			string packages = Path.Combine(SoberDataDirectory, "packages");
+			if (!Directory.Exists(packages))
+				return owners;
+
+			HashSet<string> keys = new(StringComparer.Ordinal);
+			foreach (string package in Directory.EnumerateFiles(packages, "*.apk", SearchOption.AllDirectories))
+			{
+				if (GetSoberPackageStatus(CurrentDirectoryDescriptor, package, 0, StatusInodeMask, out SoberPackageStatus status) == 0)
+				{
+					keys.Add(status.DeviceMajor.ToString("x2", CultureInfo.InvariantCulture)
+						+ ":" + status.DeviceMinor.ToString("x2", CultureInfo.InvariantCulture)
+						+ ":" + status.Inode.ToString(CultureInfo.InvariantCulture));
+				}
+			}
+
+			if (keys.Count == 0)
+				return owners;
+
+			foreach (string line in File.ReadLines("/proc/locks"))
+			{
+				if (!line.Contains("FLOCK", StringComparison.Ordinal) || line.Contains("->", StringComparison.Ordinal))
+					continue;
+
+				string[] parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+				for (int index = 1; index < parts.Length; index++)
+				{
+					if (!keys.Contains(parts[index]))
+						continue;
+					if (int.TryParse(parts[index - 1], NumberStyles.None, CultureInfo.InvariantCulture, out int owner) && owner != Environment.ProcessId)
+						owners.Add(owner);
+					break;
+				}
+			}
+		}
+		catch (Exception)
+		{
+		}
+
+		return owners;
+	}
+
+	private static bool IsSoberInstanceLocked()
+	{
+		return SoberInstanceLockOwners().Count > 0;
+	}
+
+	private static bool IsSoberInstanceHeldByNewProcess(IReadOnlyCollection<int> previousOwners)
+	{
+		foreach (int owner in SoberInstanceLockOwners())
+		{
+			if (!previousOwners.Contains(owner) && IsSoberSandboxProcess(owner))
+				return true;
+		}
+
+		return false;
+	}
+
+	private static bool IsSoberSandboxProcess(int processId)
+	{
+		try
+		{
+			return File.ReadAllText("/proc/" + processId.ToString(CultureInfo.InvariantCulture) + "/cgroup").Contains(SoberApplicationId, StringComparison.OrdinalIgnoreCase);
+		}
+		catch (Exception)
+		{
+			return false;
+		}
+	}
+
+	private static bool SoberRefusedSecondInstance(DateTime launchedUtc)
+	{
+		try
+		{
+			FileInfo log = new(Path.Combine(SoberDataDirectory, "sober_logs", "latest.log"));
+			if (!log.Exists || log.LastWriteTimeUtc < launchedUtc)
+				return false;
+
+			using FileStream stream = new(log.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+			byte[] buffer = new byte[(int)Math.Min(stream.Length, 65536)];
+			int read = stream.ReadAtLeast(buffer, buffer.Length, false);
+			return Encoding.UTF8.GetString(buffer, 0, read).Contains(SoberInstanceRunningMessage, StringComparison.Ordinal);
+		}
+		catch (Exception)
+		{
+			return false;
+		}
+	}
+
+	private static async Task<bool> WaitForSoberStartedAsync(DateTime launchedUtc, IReadOnlyCollection<int> previousOwners, CancellationToken cancellationToken)
 	{
 		using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 		timeout.CancelAfter(TimeSpan.FromSeconds(12));
@@ -1042,9 +1157,15 @@ public sealed partial class LinuxSoberRuntimeProvider : IRobloxRuntimeProvider
 		{
 			while (!timeout.IsCancellationRequested)
 			{
+				if (SoberRefusedSecondInstance(launchedUtc))
+					return false;
+
 				if (await IsSoberRunningAsync(timeout.Token).ConfigureAwait(false))
 				{
-					if (++runningChecks >= 3)
+					runningChecks++;
+					if (runningChecks >= 2 && IsSoberInstanceHeldByNewProcess(previousOwners))
+						return true;
+					if (runningChecks >= 3 && DateTime.UtcNow - launchedUtc >= SoberUnlockedStartGrace)
 						return true;
 				}
 				else
@@ -1062,6 +1183,8 @@ public sealed partial class LinuxSoberRuntimeProvider : IRobloxRuntimeProvider
 		cancellationToken.ThrowIfCancellationRequested();
 		return false;
 	}
+
+	private static readonly TimeSpan SoberUnlockedStartGrace = TimeSpan.FromSeconds(4);
 
 	private static string SoberDataDirectory => Path.Combine(
 		Environment.GetEnvironmentVariable("HOME") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
@@ -1287,7 +1410,7 @@ public sealed partial class LinuxSoberRuntimeProvider : IRobloxRuntimeProvider
 	public static async Task<bool> TryCloseSoberAsync(CancellationToken cancellationToken)
 	{
 		if (!await IsSoberRunningAsync(cancellationToken).ConfigureAwait(false))
-			return true;
+			return !IsSoberInstanceLocked() || await WaitForSoberStoppedAsync(cancellationToken).ConfigureAwait(false) || !IsSoberInstanceLocked();
 
 		try
 		{
@@ -1493,10 +1616,12 @@ public sealed partial class LinuxSoberRuntimeProvider : IRobloxRuntimeProvider
 		StartedInThisProcess = true;
 		for (int attempt = 0; attempt < 2; attempt++)
 		{
+			List<int> previousOwners = SoberInstanceLockOwners();
+			DateTime launchedUtc = DateTime.UtcNow;
 			result = await _processes.StartAsync(launchCommand, cancellationToken);
 			ThrowIfCanceled(result.Failure, cancellationToken);
 			if (result.Succeeded && result.Value is not null
-				&& await WaitForSoberStartedAsync(cancellationToken).ConfigureAwait(false))
+				&& await WaitForSoberStartedAsync(launchedUtc, previousOwners, cancellationToken).ConfigureAwait(false))
 			{
 				return OperationResult<LaunchSession>.Success(new LaunchSession(
 					RuntimeKind.Player,

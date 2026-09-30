@@ -169,7 +169,19 @@ internal sealed class DiscordActivityPipe : INamedPipeClient
 	[Obsolete("The connected pipe is not neccessary information.")]
 	public int ConnectedPipe => _inner.ConnectedPipe;
 
-	public bool Connect(int pipe) => _inner.Connect(pipe);
+	public bool Connect(int pipe)
+	{
+		if (_inner.Connect(pipe))
+			return true;
+		if (Voidstrap.Utility.Platform.IsWindows)
+			return false;
+		foreach (string path in DiscordIpc.FindUnixSockets(pipe))
+		{
+			if (DiscordIpc.TryConnectPath(_inner, path))
+				return true;
+		}
+		return false;
+	}
 
 	public bool ReadFrame(out PipeFrame frame) => _inner.ReadFrame(out frame);
 

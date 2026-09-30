@@ -64,7 +64,7 @@ internal static class VinegarConfigurationMapper
 		return new VinegarNativeConfigurationOptions(
 			Renderer: settings.VinegarRenderer,
 			EnableGameMode: settings.VinegarEnableGameMode,
-			DiscordRpcEnabled: settings.VinegarDiscordRpcEnabled,
+			DiscordRpcEnabled: settings.VinegarDiscordRpcEnabled ?? (settings.UseDiscordRichPresence ? false : null),
 			Gpu: settings.VinegarGpu,
 			VirtualDesktop: settings.VinegarVirtualDesktop,
 			Launcher: settings.VinegarLauncher,
@@ -79,6 +79,7 @@ internal static class VinegarConfigurationMapper
 		return settings.VinegarRenderer is not null
 			|| settings.VinegarEnableGameMode is not null
 			|| settings.VinegarDiscordRpcEnabled is not null
+			|| settings.UseDiscordRichPresence
 			|| !string.IsNullOrWhiteSpace(settings.VinegarGpu)
 			|| !string.IsNullOrWhiteSpace(settings.VinegarVirtualDesktop)
 			|| !string.IsNullOrWhiteSpace(settings.VinegarLauncher)

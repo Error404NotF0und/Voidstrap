@@ -96,6 +96,7 @@ internal static partial class LinuxStartup
 		if (IsConfiguredForThisProcess())
 		{
 			_activeStage = NormaliseStage(Environment.GetEnvironmentVariable(GpuRetryFlag));
+			ApplyStageLibraries();
 			_supervised = Environment.GetEnvironmentVariable(SupervisedFlag) == "1";
 			_safeMode = DecideSafeMode();
 			RestoreChildEnvironment();
@@ -140,6 +141,7 @@ internal static partial class LinuxStartup
 					Environment.SetEnvironmentVariable(entry.Key, entry.Value);
 				}
 			}
+			ApplyStageLibraries();
 		}
 		catch (Exception)
 		{
@@ -300,15 +302,18 @@ internal static partial class LinuxStartup
 				return VulkanSupport.None;
 
 			byte* properties = stackalloc byte[4096];
+			bool hardware = false;
 			for (int index = 0; index < capacity; index++)
 			{
 				new Span<byte>(properties, 4096).Clear();
 				VkGetPhysicalDeviceProperties(devices[index], properties);
 				int deviceType = *(int*)(properties + 16);
 				if (deviceType is 1 or 2 or 3)
-					return VulkanSupport.Hardware;
+					hardware = true;
 			}
-			return VulkanSupport.SoftwareOnly;
+			if (!CanCreateWindowInstance())
+				return VulkanSupport.None;
+			return hardware ? VulkanSupport.Hardware : VulkanSupport.SoftwareOnly;
 		}
 		catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
 		{
@@ -318,6 +323,38 @@ internal static partial class LinuxStartup
 		{
 			if (instance != 0)
 				VkDestroyInstance(instance, 0);
+		}
+	}
+
+	private static unsafe bool CanCreateWindowInstance()
+	{
+		if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DISPLAY")))
+			return true;
+		nint surface = System.Runtime.InteropServices.Marshal.StringToHGlobalAnsi("VK_KHR_surface");
+		nint xlib = System.Runtime.InteropServices.Marshal.StringToHGlobalAnsi("VK_KHR_xlib_surface");
+		nint instance = 0;
+		try
+		{
+			nint* names = stackalloc nint[2];
+			names[0] = surface;
+			names[1] = xlib;
+			byte* createInfo = stackalloc byte[64];
+			new Span<byte>(createInfo, 64).Clear();
+			*(int*)createInfo = 1;
+			*(uint*)(createInfo + 48) = 2;
+			*(nint**)(createInfo + 56) = names;
+			return VkCreateInstance(createInfo, 0, &instance) == 0 && instance != 0;
+		}
+		catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+		{
+			return false;
+		}
+		finally
+		{
+			if (instance != 0)
+				VkDestroyInstance(instance, 0);
+			System.Runtime.InteropServices.Marshal.FreeHGlobal(surface);
+			System.Runtime.InteropServices.Marshal.FreeHGlobal(xlib);
 		}
 	}
 
@@ -481,6 +518,11 @@ internal static partial class LinuxStartup
 			{
 				Set("LIBGL_ALWAYS_SOFTWARE", "1");
 				Set("LP_NUM_THREADS", SoftwareThreadCount.ToString(CultureInfo.InvariantCulture));
+				string? mesaVendor = MesaEglVendorFile();
+				if (mesaVendor != null)
+				{
+					SetIfMissing("__EGL_VENDOR_LIBRARY_FILENAMES", mesaVendor);
+				}
 			}
 		}
 		else
@@ -588,6 +630,25 @@ internal static partial class LinuxStartup
 			|| Path.GetFileName(path).StartsWith("ld-musl", StringComparison.Ordinal));
 	}
 
+	private static string? MesaEglVendorFile()
+	{
+		foreach (string directory in new[] { "/usr/share/glvnd/egl_vendor.d", "/etc/glvnd/egl_vendor.d" })
+		{
+			try
+			{
+				if (!Directory.Exists(directory))
+					continue;
+				string? mesa = Directory.EnumerateFiles(directory, "*mesa*.json").OrderBy(static path => path, StringComparer.Ordinal).FirstOrDefault();
+				if (mesa != null)
+					return mesa;
+			}
+			catch (Exception)
+			{
+			}
+		}
+		return null;
+	}
+
 	private static string[] LavapipeDrivers()
 	{
 		List<string> drivers = [];
@@ -680,10 +741,84 @@ internal static partial class LinuxStartup
 		return HasOpenGlBackend() && !File.Exists(NvidiaDriverVersionPath);
 	}
 
+	private const string OpenGlWgpuLibraryName = "libwgpu_native_gl.so";
+
+	private static string OpenGlWgpuLibrary => Path.Combine(AppContext.BaseDirectory, OpenGlWgpuLibraryName);
+
+	private static void ApplyStageLibraries()
+	{
+		bool softwareGl = _activeStage == SoftwareStage && LavapipeDrivers().Length == 0;
+		if ((_activeStage != HardwareGlStage && !softwareGl) || !File.Exists(OpenGlWgpuLibrary))
+			return;
+		try
+		{
+			Type? resolverType = Type.GetType("Silk.NET.Core.Loader.PathResolver, Silk.NET.Core", false);
+			object? resolver = resolverType?.GetProperty("Default", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)?.GetValue(null);
+			if (resolver?.GetType().GetProperty("Resolvers", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)?.GetValue(resolver) is not List<Func<string, IEnumerable<string>>> resolvers)
+				return;
+			string library = OpenGlWgpuLibrary;
+			resolvers.Insert(0, name => name.Contains("wgpu_native", StringComparison.Ordinal) ? [library] : []);
+		}
+		catch (Exception)
+		{
+		}
+		PrepareOpenGlShaders();
+	}
+
+	private static readonly string[] OpenGlShaderAssemblies = ["ProGPU.Backend", "ProGPU.Compute", "ProGPU.Vector", "ProGPU.Scene", "ProGPU.Text", "ProGPU.Wpf"];
+
+	private static readonly System.Text.RegularExpressions.Regex OpenGlReservedShaderNames = new(@"\b(packed)\b", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+	private static void PrepareOpenGlShaders()
+	{
+		try
+		{
+			const System.Reflection.BindingFlags hidden = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
+			Type? resourceType = Type.GetType("ProGPU.Backend.ShaderResource, ProGPU.Backend", false);
+			Type? keyType = resourceType?.GetNestedType("ResourceKey", System.Reflection.BindingFlags.NonPublic);
+			if (keyType is null || resourceType?.GetField("s_sources", hidden)?.GetValue(null) is not System.Collections.IDictionary sources)
+				return;
+			foreach (string assemblyName in OpenGlShaderAssemblies)
+			{
+				System.Reflection.Assembly assembly;
+				try
+				{
+					assembly = System.Reflection.Assembly.Load(assemblyName);
+				}
+				catch (Exception)
+				{
+					continue;
+				}
+				string prefix = assemblyName + ".Shaders.";
+				foreach (string resource in assembly.GetManifestResourceNames())
+				{
+					if (!resource.StartsWith(prefix, StringComparison.Ordinal) || !resource.EndsWith(".wgsl", StringComparison.OrdinalIgnoreCase))
+						continue;
+					using Stream? stream = assembly.GetManifestResourceStream(resource);
+					if (stream is null)
+						continue;
+					using StreamReader reader = new(stream, System.Text.Encoding.UTF8, true);
+					string source = reader.ReadToEnd();
+					string renamed = OpenGlReservedShaderNames.Replace(source, "voidstrap_$1");
+					if (ReferenceEquals(renamed, source) || renamed == source)
+						continue;
+					object? key = Activator.CreateInstance(keyType, assembly, resource[prefix.Length..]);
+					if (key is not null && !sources.Contains(key))
+						sources[key] = renamed;
+				}
+			}
+		}
+		catch (Exception)
+		{
+		}
+	}
+
 	private static bool HasOpenGlBackend()
 	{
 		try
 		{
+			if (File.Exists(OpenGlWgpuLibrary))
+				return true;
 			string library = Path.Combine(AppContext.BaseDirectory, "libwgpu_native.so");
 			if (!File.Exists(library))
 				return true;

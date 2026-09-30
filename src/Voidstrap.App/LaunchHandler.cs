@@ -787,7 +787,11 @@ public static class LaunchHandler
 				break;
 			}
 
-			await Task.Delay(1000, cancellationToken);
+			if (await Voidstrap.Utility.LinuxSessionHandoff.WaitForHandoffAsync(TimeSpan.FromSeconds(1), cancellationToken))
+			{
+				App.Logger.WriteLine("LaunchHandler::WaitForSoberExitAsync", "Another Voidstrap launch is taking over the Roblox session");
+				return true;
+			}
 		}
 
 		if (!started)
@@ -829,14 +833,112 @@ public static class LaunchHandler
 					"Sober was not found on process check " + missed + " of " + SoberExitConfirmations + ", waiting before deciding it closed");
 			}
 
-			await Task.Delay(2000, cancellationToken);
+			if (await Voidstrap.Utility.LinuxSessionHandoff.WaitForHandoffAsync(TimeSpan.FromSeconds(2), cancellationToken))
+			{
+				App.Logger.WriteLine("LaunchHandler::WaitForSoberExitAsync", "Another Voidstrap launch is taking over the Roblox session");
+				return true;
+			}
 		}
 
 		return false;
 	}
 
+	private static bool StartStudioResident(int processId)
+	{
+		try
+		{
+			Voidstrap.Integrations.Studio.StudioIntegration.Start(studioSession: true);
+			_ = Task.Run(async delegate
+			{
+				try
+				{
+					await WaitForStudioExitAsync(processId, _residentCancellation.Token);
+				}
+				catch (OperationCanceledException)
+				{
+				}
+				catch (Exception ex)
+				{
+					App.Logger.WriteLine("LaunchHandler::StartStudioResident", "Waiting for Roblox Studio failed: " + ex.Message);
+				}
+
+				App.Logger.WriteLine("LaunchHandler::StartStudioResident", "Roblox Studio has exited, shutting down");
+				try
+				{
+					Voidstrap.Integrations.Studio.StudioIntegration.Shutdown();
+				}
+				catch (Exception ex)
+				{
+					App.Logger.WriteLine("LaunchHandler::StartStudioResident", "The Studio integration could not be stopped: " + ex.Message);
+				}
+
+				if (App.Settings.Prop.CleanerOptions != CleanerOptions.Never)
+				{
+					try
+					{
+						Cleaner.DoCleaning();
+					}
+					catch (Exception ex)
+					{
+						App.Logger.WriteLine("LaunchHandler::StartStudioResident", "The cleaner could not finish: " + ex.Message);
+					}
+				}
+
+				Volatile.Write(ref _residentActive, 0);
+				PortableSessionEnded.TrySetResult(true);
+				App.Terminate();
+			});
+
+			Volatile.Write(ref _residentActive, 1);
+			App.Logger.WriteLine("LaunchHandler::StartStudioResident", "Voidstrap is staying resident so the Roblox Studio presence keeps running");
+			return true;
+		}
+		catch (Exception ex)
+		{
+			App.Logger.WriteLine("LaunchHandler::StartStudioResident", "Voidstrap could not stay resident for Roblox Studio: " + ex.Message);
+			return false;
+		}
+	}
+
+	private static bool IsProcessAlive(int processId)
+	{
+		if (processId <= 0)
+			return false;
+		try
+		{
+			using Process process = Process.GetProcessById(processId);
+			return !process.HasExited;
+		}
+		catch (Exception)
+		{
+			return false;
+		}
+	}
+
+	private static async Task WaitForStudioExitAsync(int processId, CancellationToken cancellationToken)
+	{
+		Voidstrap.Platform.Linux.LinuxVinegarProcessProbe probe = new(new Voidstrap.Core.SystemProcessService());
+		int missed = 0;
+		while (!cancellationToken.IsCancellationRequested)
+		{
+			bool running = IsProcessAlive(processId) || await probe.IsRunningAsync(cancellationToken);
+			if (running)
+			{
+				missed = 0;
+			}
+			else if (++missed >= SoberExitConfirmations)
+			{
+				return;
+			}
+			await Task.Delay(2000, cancellationToken);
+		}
+	}
+
 	private static bool StartResidentWatcher(int processId, bool isSoberPlayer)
 	{
+		if (Voidstrap.Utility.Platform.IsLinux && !isSoberPlayer)
+			return StartStudioResident(processId);
+
 		try
 		{
 			Voidstrap.Models.WatcherData watcherData = new()
@@ -907,11 +1009,15 @@ public static class LaunchHandler
 					}
 				}
 
+				if (Voidstrap.Utility.Platform.IsLinux)
+					Voidstrap.Utility.LinuxSessionHandoff.ClearResident();
 				Volatile.Write(ref _residentActive, 0);
 				PortableSessionEnded.TrySetResult(true);
 				App.Terminate();
 			});
 
+			if (Voidstrap.Utility.Platform.IsLinux && isSoberPlayer)
+				Voidstrap.Utility.LinuxSessionHandoff.RegisterResident();
 			Volatile.Write(ref _residentActive, 1);
 			App.Logger.WriteLine("LaunchHandler::StartResidentWatcher", "Voidstrap is staying resident so overlays and integrations keep running");
 			return true;
@@ -989,6 +1095,9 @@ public static class LaunchHandler
 				cancellation.ThrowIfCancellationRequested();
 				if (runtimeKind == Voidstrap.Platform.RuntimeKind.Player)
 				{
+					SetPortableLaunchStatus("Closing the current Roblox session");
+					await Voidstrap.Utility.LinuxSessionHandoff.RequestHandoffAsync(cancellation);
+					cancellation.ThrowIfCancellationRequested();
 					Voidstrap.Platform.Linux.LinuxSoberRuntimeProvider.ForceX11Session = Voidstrap.Integrations.Overlays.OverlaySettings.RequiresLinuxX11Session
 						&& !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DISPLAY"));
 					App.Logger.WriteLine("LaunchHandler::LaunchPortableRuntime", Voidstrap.Platform.Linux.LinuxSoberRuntimeProvider.ForceX11Session
@@ -1017,6 +1126,22 @@ public static class LaunchHandler
 					catch (Exception ex)
 					{
 						App.Logger.WriteLine("LaunchHandler::LaunchPortableRuntime", "Linux modifications could not be prepared: " + ex.Message);
+					}
+				}
+				else
+				{
+					try
+					{
+						SetPortableLaunchStatus(Strings.Bootstrapper_Status_Configuring);
+						await bootstrapper.PrepareLinuxStudioLaunchAsync(cancellation);
+					}
+					catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+					{
+						throw;
+					}
+					catch (Exception ex)
+					{
+						App.Logger.WriteLine("LaunchHandler::LaunchPortableRuntime", "Studio modifications could not be prepared: " + ex.Message);
 					}
 				}
 

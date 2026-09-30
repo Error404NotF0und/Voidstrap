@@ -118,6 +118,8 @@ public static class RoundedWindowChrome
 		}
 		ConstrainContentWidth(window);
 		ApplyStartupLocation(window);
+		if (Voidstrap.Utility.Platform.IsLinux)
+			LinuxPointerRefresh.Attach(window);
 		ApplyClip(window);
 		EnsureLinuxIdentity(window);
 		LinuxTitleBar.Apply(window);
