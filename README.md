@@ -126,7 +126,7 @@ To update to the latest code, run step 3 again.
 
 ## Building
 
-The Windows app can only be built on Windows. The Android app can be built on Windows, Linux or macOS.
+The Windows app can only be built on Windows. The Linux app can be built on Linux or Windows. The Android app can be built on Windows, Linux or macOS.
 
 ### Requirements
 
@@ -134,6 +134,13 @@ The Windows app can only be built on Windows. The Android app can be built on Wi
 
 * Windows 10 or 11 (x64)
 * [.NET SDK 10.0.300](https://dotnet.microsoft.com/download/dotnet/10.0) or newer
+
+**Linux app**
+
+* [Git](https://git-scm.com/downloads), Bash and internet access for NuGet restore
+* [.NET 10 SDK](https://learn.microsoft.com/en-us/dotnet/core/install/linux) 10.0.300 or a later stable 10.0 SDK compatible with `global.json`
+* [PowerShell 7](https://learn.microsoft.com/en-us/powershell/scripting/install/linux-overview), available as `pwsh`, if using the publish script
+* Additional packaging tools listed below, if creating release packages
 
 **Android app**
 
@@ -169,6 +176,84 @@ powershell -ExecutionPolicy Bypass -File .\publish-all.ps1 -Only windows
 
 It is written to `PublishedBuilds\Windows\Voidstrap.exe`. Like the releases, it needs the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) to run.
 
+### Linux app
+
+Run the following commands from the repository root after cloning. Build `src/Voidstrap.Cross/Voidstrap.Cross.csproj` for Linux. Building the entire solution on Linux also tries to build the Windows app, whose WinRT tooling requires Windows. The cross platform project uses LibreWPF even though its target framework is named `net10.0-windows`.
+
+#### Set up the SDK
+
+Install the SDK using the [instructions for your Linux distribution](https://learn.microsoft.com/en-us/dotnet/core/install/linux), then check the version selected by `global.json`:
+
+```bash
+dotnet --version
+```
+
+It must report 10.0.300 or a later stable 10.0 SDK. If your package manager only offers an older SDK, install the required version with Microsoft's [install script](https://learn.microsoft.com/en-us/dotnet/core/install/linux-scripted-manual). Install the distribution dependencies listed there first:
+
+```bash
+curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+bash /tmp/dotnet-install.sh --version 10.0.300 --install-dir "$HOME/.dotnet"
+export DOTNET_ROOT="$HOME/.dotnet"
+export PATH="$DOTNET_ROOT:$PATH"
+dotnet --version
+```
+
+The exports apply to the current terminal. Add them to your shell profile if you want to use this SDK in future terminals.
+
+#### Build the executable
+
+For an Intel or AMD 64 bit Linux system using glibc:
+
+```bash
+dotnet publish src/Voidstrap.Cross/Voidstrap.Cross.csproj \
+  -c Release -r linux-x64 --self-contained true \
+  -o PublishedBuilds/Linux-x64 \
+  -p:EnableWindowsTargeting=true \
+  -p:DebugType=none -p:DebugSymbols=false
+```
+
+Publish restores NuGet packages and builds dependencies automatically. The output is `PublishedBuilds/Linux-x64/Voidstrap`, an executable with the .NET runtime included. It does not require the Windows Desktop Runtime, Wine or a separate native library build. Running it still requires a graphical Linux session and the system graphics libraries used by LibreWPF.
+
+Choose the runtime identifier that matches the destination system. Change both `-r` and the output folder when building another target:
+
+| Runtime identifier | Target CPU | Linux C library |
+| --- | --- | --- |
+| `linux-x64` | Intel or AMD 64 bit | glibc, as used by Ubuntu, Debian, Fedora and Arch |
+| `linux-arm64` | ARM64 | glibc |
+| `linux-musl-x64` | Intel or AMD 64 bit | musl, as used by Alpine |
+| `linux-musl-arm64` | ARM64 | musl |
+
+Cross compilation produces an executable for the selected target. It does not make that executable runnable on a different CPU or C library.
+
+#### Create release packages
+
+Install PowerShell 7 and make sure `pwsh` is in `PATH`. Full glibc packaging also needs Bash, `curl`, `gzip`, `tar`, `awk`, Binutils (`readelf` and `objdump`), `dpkg-deb`, `rpmbuild`, `flatpak` and `flatpak-builder`. On Ubuntu or Debian, install the package tools with:
+
+```bash
+sudo apt-get update
+sudo apt-get install curl ca-certificates binutils dpkg rpm flatpak flatpak-builder
+```
+
+Then publish the x64 release packages:
+
+```bash
+pwsh -NoProfile -File ./publish-all.ps1 -Only linux-x64 -LinuxPackages -NoPause
+```
+
+The script writes `.tar.gz`, `.deb`, `.rpm`, `.AppImage`, `.AppImage.zsync` and `.flatpak` files to `PublishedBuilds/Linux`, with the version from `Directory.Build.props` in their names. It downloads AppImage tooling and dependencies as needed, adds Flathub for the current user and installs the Flatpak build runtime and SDK. The first run needs additional download time and disk space. `-LinuxPackages` makes missing packaging prerequisites an error.
+
+For an AppImage only, use:
+
+```bash
+pwsh -NoProfile -File ./publish-all.ps1 -Only linux-x64 -AppImage -NoPause
+```
+
+This route needs Bash, `curl`, `gzip`, `tar`, `awk`, Binutils and `dpkg-deb`, plus PowerShell and the .NET SDK. It writes the AppImage and its `.zsync` file to `PublishedBuilds/Linux` without requiring RPM or Flatpak tools.
+
+Replace `linux-x64` with `linux-arm64` to package ARM64. Building a Flatpak for a different CPU also requires registered QEMU user emulation, which the script checks. The musl targets support tar archives through `-LinuxPackages`. DEB, RPM, AppImage and Flatpak packaging use the glibc targets. Add `-SkipAppImage` to the full packaging command to omit AppImage generation.
+
+The x64 build and packaging commands are verified. Test ARM64 and musl builds on matching systems.
+
 ### Android app
 
 Add the Rust targets once:
@@ -192,7 +277,7 @@ Release APKs are signed with your own keystore. Add `voidstrap.storeFile`, `void
 powershell -ExecutionPolicy Bypass -File .\publish-all.ps1 -Only android
 ```
 
-The signed APKs are written to `PublishedBuilds\Android`. Each run of the publish script clears `PublishedBuilds` first, so add `-NoClean` to keep the output of an earlier run.
+The signed APKs are written to `PublishedBuilds\Android`. The publish script keeps other targets' output and reuses build caches by default. Add `-Clean` to clear the selected targets' build caches before publishing.
 
 ## Forking
 
