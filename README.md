@@ -35,11 +35,9 @@
   <img src="https://raw.githubusercontent.com/devicons/devicon/master/icons/windows8/windows8-original.svg" alt="Windows" width="32" height="32"/>
   &nbsp;&nbsp;
   <img src="https://raw.githubusercontent.com/devicons/devicon/master/icons/android/android-original.svg" alt="Android" width="32" height="32"/>
-
-  <!-- Linux
+  &nbsp;&nbsp;
   <img src="https://raw.githubusercontent.com/devicons/devicon/master/icons/linux/linux-original.svg" alt="Linux" width="32" height="32"/>
   &nbsp;&nbsp;
-  -->
 
   <!-- macOS
   <img src="https://raw.githubusercontent.com/devicons/devicon/master/icons/apple/apple-original.svg" alt="macOS" width="32" height="32"/>
@@ -55,13 +53,11 @@ irm https://voidstrapp.pages.dev/quick-install | iex
 ---
 
 > [!IMPORTANT]
-> Voidstrap currently supports **Windows 10 and above** and **Android**.
-> **macOS and Linux support are currently in development** and will be available in a future release.
+> Voidstrap currently supports **Windows 10 and above**, **Android**, and **Linux**.  
+> **macOS support is currently in development** and will be available in a future release.
 >
-> If you're looking for a Bootstrapper for other platforms in the meantime:
+> If you're looking for a MacOS Bootstrapper in the meantime:
 > - **macOS:** [AppleBlox](https://github.com/AppleBlox/appleblox)
-> - **Linux:** [Sober](https://sober.vinegarhq.org/)
-> - **Linux:** [Lution](https://github.com/wookhq/Lution)
 
 > [!WARNING]
 > Voidstrap is not an exploit and never will be. We are not considered an exploit. We are here to give users more freedom, features, and support for Roblox.
