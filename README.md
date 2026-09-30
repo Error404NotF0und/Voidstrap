@@ -113,22 +113,36 @@ Step-1: Go to settings and then about phone
 Step-2: Find Build number:
 
     Google Pixel    Settings → About phone → Build number
+
 Samsung Galaxy    Settings → About phone → Software information → Build number
+
 OnePlus    Settings → About device → Version → Build number
+
 Xiaomi/Redmi/POCO    Settings → About phone → OS version or MIUI/HyperOS version
+
 Motorola    Settings → About phone → Build number
+
 LG    Settings → About phone → Software info → Build number
+
 HTC    Settings → About → Software information → More → Build number
+
 Sony Xperia    Settings → About phone → Build number
+
 ASUS Zenfone/ROG    Settings → System → About phone → Software information → Build number
+
 Amazon Fire tablet    Settings → Device Options → About Fire Tablet → Serial number
+
 Tap Build number seven times.
+
 Enter your device PIN, password, or pattern if prompted.
+
 You should see a message such as “You are now a developer!”
+
 Return to the main Settings screen and open:
 
     System → Developer options, or
     Additional settings → Developer options, depending on the device.
+
 
 Step-3: Find the USB Debugging Option and turn it on
 
