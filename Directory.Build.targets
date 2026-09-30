@@ -1,5 +1,9 @@
 ﻿<Project>
 
+	<PropertyGroup Condition="'$(MSBuildRuntimeType)' == 'Full'">
+		<AlwaysCompileMarkupFilesInSeparateDomain>true</AlwaysCompileMarkupFilesInSeparateDomain>
+	</PropertyGroup>
+
 	<ItemGroup Condition="'$(EnableDefaultItems)' != 'false'">
 		<Compile Remove="obj/**/*AssemblyInfo.cs" />
 		<Compile Remove="obj/**/*AssemblyAttributes.cs" />

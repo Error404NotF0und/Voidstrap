@@ -943,7 +943,6 @@ public class Bootstrapper
                 absentSeconds += 3;
                 if (absentSeconds >= 25)
                 {
-                    System.Windows.Application current = System.Windows.Application.Current;
                     break;
                 }
             }
@@ -1253,12 +1252,12 @@ public class Bootstrapper
 		if (!forceManifest && AppData.State.VersionGuid == _latestVersionGuid && !MustUpgrade && !ReinstallRequested)
         {
             App.Logger.WriteLine("Bootstrapper::GetLatestVersionInfo", "Already up to date, skipping package manifest fetch.");
-            _versionPackageManifest = new PackageManifest();
+            _versionPackageManifest = [];
             return;
         }
 		if (!fetchManifest)
 		{
-			_versionPackageManifest = new PackageManifest();
+			_versionPackageManifest = [];
 			return;
 		}
         IReadOnlyList<string> manifestUrls = Deployment.GetLocations("/" + _latestVersionGuid + "-rbxPkgManifest.txt", UseVng);
@@ -1783,18 +1782,17 @@ public class Bootstrapper
     private async Task<string?> WaitForLogFileAsync(string rbxLogDir, ProcessStartInfo startInfo, CancellationToken ct)
     {
         HashSet<string> existingLogs = GetExistingLogFiles(rbxLogDir);
-        DateTime launchStartedUtc = DateTime.UtcNow;
 		string clientSettingsPath = Path.Combine(AppData.Directory, "ClientSettings", "ClientAppSettings.json");
 		string blockedFlagsPath = Path.Combine(Paths.Cache, "BlockedFastFlags.txt");
 		TrySuppressKnownBlockedFastFlags(clientSettingsPath, blockedFlagsPath);
-		(string? logFile, bool timedOut, bool startupCrash) = await LaunchAndWaitForLogFileAsync(rbxLogDir, existingLogs, launchStartedUtc, startInfo, ct).ConfigureAwait(false);
+		(string? logFile, bool timedOut, bool startupCrash) = await LaunchAndWaitForLogFileAsync(rbxLogDir, existingLogs, startInfo, ct).ConfigureAwait(false);
 		if (startupCrash && !ct.IsCancellationRequested)
 		{
 			App.Logger.WriteLine("Bootstrapper::WaitForLogFile", "Roblox crashed before its renderer started, relaunching once as is");
 			Voidstrap.Utility.AppNotifications.RecordInfo("roblox:startupcrash", "Roblox crashed while starting", "Roblox crashed before it finished loading, so Voidstrap relaunched it automatically.");
 			SetStatus("Roblox crashed while starting, trying again");
 			existingLogs = GetExistingLogFiles(rbxLogDir);
-			(logFile, timedOut, startupCrash) = await LaunchAndWaitForLogFileAsync(rbxLogDir, existingLogs, DateTime.UtcNow, startInfo, ct).ConfigureAwait(false);
+			(logFile, timedOut, startupCrash) = await LaunchAndWaitForLogFileAsync(rbxLogDir, existingLogs, startInfo, ct).ConfigureAwait(false);
 		}
 		if (startupCrash && !ct.IsCancellationRequested && _launchMode == LaunchMode.Player)
 		{
@@ -1802,7 +1800,7 @@ public class Bootstrapper
 			App.Logger.WriteLine("Bootstrapper::WaitForLogFile", "Roblox crashed again, relaunching without the process priority, memory limit and throttling changes");
 			SetStatus("Roblox crashed while starting, trying a safe launch");
 			existingLogs = GetExistingLogFiles(rbxLogDir);
-			(logFile, timedOut, startupCrash) = await LaunchAndWaitForLogFileAsync(rbxLogDir, existingLogs, DateTime.UtcNow, startInfo, ct).ConfigureAwait(false);
+			(logFile, timedOut, startupCrash) = await LaunchAndWaitForLogFileAsync(rbxLogDir, existingLogs, startInfo, ct).ConfigureAwait(false);
 			if (!startupCrash && !string.IsNullOrEmpty(logFile))
 				App.Logger.WriteLine("Bootstrapper::WaitForLogFile", "Roblox started once the launch time process changes were skipped");
 		}
@@ -1830,8 +1828,7 @@ public class Bootstrapper
 			File.Move(clientSettingsPath, disabledPath, overwrite: true);
 			App.Logger.WriteLine("Bootstrapper::WaitForLogFile", "Roblox did not become ready, retrying once without the installed FastFlag file");
 			existingLogs = GetExistingLogFiles(rbxLogDir);
-			launchStartedUtc = DateTime.UtcNow;
-			(logFile, _, bool recoveryStartupCrash) = await LaunchAndWaitForLogFileAsync(rbxLogDir, existingLogs, launchStartedUtc, startInfo, ct).ConfigureAwait(false);
+			(logFile, _, bool recoveryStartupCrash) = await LaunchAndWaitForLogFileAsync(rbxLogDir, existingLogs, startInfo, ct).ConfigureAwait(false);
 			if (!string.IsNullOrEmpty(logFile) && !recoveryStartupCrash)
 			{
 				if (!string.IsNullOrEmpty(blockedHash))
@@ -1875,10 +1872,10 @@ public class Bootstrapper
 		}
     }
 
-	private async Task<(string? LogFile, bool TimedOut, bool StartupCrash)> LaunchAndWaitForLogFileAsync(string rbxLogDir, HashSet<string> existingLogs, DateTime launchStartedUtc, ProcessStartInfo startInfo, CancellationToken ct)
+	private async Task<(string? LogFile, bool TimedOut, bool StartupCrash)> LaunchAndWaitForLogFileAsync(string rbxLogDir, HashSet<string> existingLogs, ProcessStartInfo startInfo, CancellationToken ct)
 	{
 		bool retainForRecovery = false;
-		launchStartedUtc = DateTime.UtcNow;
+		DateTime launchStartedUtc = DateTime.UtcNow;
 		using var logWaiter = new RobloxLogWaiter(rbxLogDir, existingLogs, launchStartedUtc);
         try
         {
@@ -2544,7 +2541,7 @@ public class Bootstrapper
         try
         {
             ct.ThrowIfCancellationRequested();
-            ProcessStartInfo watcherStartInfo = new ProcessStartInfo
+            ProcessStartInfo watcherStartInfo = new()
             {
                 FileName = Paths.LaunchExecutable,
                 UseShellExecute = false
@@ -2622,8 +2619,7 @@ public class Bootstrapper
             using RegistryKey? registryKey = root.OpenSubKey("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers");
             if (registryKey != null)
             {
-                string? obj = registryKey.GetValue(AppData.ExecutablePath) as string;
-                if (obj != null && obj.Contains("RUNASADMIN", StringComparison.OrdinalIgnoreCase))
+                if (registryKey.GetValue(AppData.ExecutablePath) is string value && value.Contains("RUNASADMIN", StringComparison.OrdinalIgnoreCase))
                 {
                     return true;
                 }
@@ -2656,10 +2652,8 @@ public class Bootstrapper
         for (int round = 1; round <= 3; round++)
         {
             Process[] processes = studioRunning
-                ? Process.GetProcessesByName(ProcRobloxPlayer).ToArray()
-                : Process.GetProcessesByName(ProcRobloxPlayer)
-                    .Concat(Process.GetProcessesByName(ProcRobloxCrash))
-                    .ToArray();
+                ? Process.GetProcessesByName(ProcRobloxPlayer)
+                : [.. Process.GetProcessesByName(ProcRobloxPlayer), .. Process.GetProcessesByName(ProcRobloxCrash)];
             if (processes.Length == 0)
             {
                 return;
@@ -2690,10 +2684,8 @@ public class Bootstrapper
             await Task.Delay(500, ct).ConfigureAwait(continueOnCapturedContext: false);
         }
         Process[] remaining = studioRunning
-            ? Process.GetProcessesByName(ProcRobloxPlayer).ToArray()
-            : Process.GetProcessesByName(ProcRobloxPlayer)
-                .Concat(Process.GetProcessesByName(ProcRobloxCrash))
-                .ToArray();
+            ? Process.GetProcessesByName(ProcRobloxPlayer)
+            : [.. Process.GetProcessesByName(ProcRobloxPlayer), .. Process.GetProcessesByName(ProcRobloxCrash)];
         bool stillRunning = false;
         foreach (Process process in remaining)
         {
@@ -3789,7 +3781,7 @@ public class Bootstrapper
         public bool[] Done { get; set; } = [];
     }
 
-	private async Task DownloadMultipartAsync(IReadOnlyList<string> urls, int initialUrlIndex, string tempFile, long contentLength, int bufferSize, int maxSegments, bool updating, string logIdent, PackageProgressTracker progress, CancellationToken token)
+	private async Task DownloadMultipartAsync(List<string> urls, int initialUrlIndex, string tempFile, long contentLength, int bufferSize, int maxSegments, bool updating, string logIdent, PackageProgressTracker progress, CancellationToken token)
     {
         int segs = (int)Math.Clamp(contentLength / TargetSegmentBytes, 1L, MaxSegmentCount);
         if (segs < maxSegments)
@@ -3948,7 +3940,7 @@ public class Bootstrapper
         }
     }
 
-	private async Task DownloadSegmentAsync(IReadOnlyList<string> urls, int initialUrlIndex, Microsoft.Win32.SafeHandles.SafeFileHandle handle, MultipartDownloadState state, int segmentIndex, long start, long end, long contentLength, int bufferSize, string metaFile, object metaLock, Action<long> reportProgress, CancellationToken token)
+	private async Task DownloadSegmentAsync(List<string> urls, int initialUrlIndex, Microsoft.Win32.SafeHandles.SafeFileHandle handle, MultipartDownloadState state, int segmentIndex, long start, long end, long contentLength, int bufferSize, string metaFile, object metaLock, Action<long> reportProgress, CancellationToken token)
 	{
 		int attempts = Math.Clamp(urls.Count, 2, 4);
 		Exception? failure = null;
@@ -4061,11 +4053,8 @@ public class Bootstrapper
 
     private void ExtractPackage(Package package, List<string>? files = null)
     {
-        string? valueOrDefault = AppData.PackageDirectoryMap.GetValueOrDefault(package.Name);
-        if (valueOrDefault == null)
-        {
-			throw new InvalidDataException("Package " + package.Name + " is not present in the extraction map");
-        }
+        string valueOrDefault = AppData.PackageDirectoryMap.GetValueOrDefault(package.Name)
+            ?? throw new InvalidDataException("Package " + package.Name + " is not present in the extraction map");
         string? fileFilter = null;
         if (files != null)
         {
@@ -4706,7 +4695,7 @@ public class Bootstrapper
         }
         bool cacheVersionMatches = string.Equals(AppData.State.ModApplyVersion, _latestVersionGuid, StringComparison.OrdinalIgnoreCase);
         Dictionary<string, string> previousCache = cacheVersionMatches
-            ? new Dictionary<string, string>(AppData.State.ModApplyCache ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase)
+            ? new Dictionary<string, string>(AppData.State.ModApplyCache ?? [], StringComparer.OrdinalIgnoreCase)
             : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         ConcurrentDictionary<string, string> nextCache = new(StringComparer.OrdinalIgnoreCase);
         ConcurrentQueue<(string Relative, string Message)> applyErrors = new();
@@ -4923,13 +4912,13 @@ public class Bootstrapper
     {
         if (string.Equals(AppData.State.ModApplyVersion, _latestVersionGuid, StringComparison.OrdinalIgnoreCase))
         {
-            return AppData.State.ManagedModManifest ?? new Dictionary<string, List<string>>();
+            return AppData.State.ManagedModManifest ?? [];
         }
         if (string.Equals(App.State.Prop.ModApplyVersion, _latestVersionGuid, StringComparison.OrdinalIgnoreCase))
         {
-            return App.State.Prop.ManagedModManifest ?? new Dictionary<string, List<string>>();
+            return App.State.Prop.ManagedModManifest ?? [];
         }
-        return new Dictionary<string, List<string>>();
+        return [];
     }
 
     private Package? ResolveInstalledPackage(string packageName)
