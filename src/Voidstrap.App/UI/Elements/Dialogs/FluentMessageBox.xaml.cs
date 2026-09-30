@@ -8,6 +8,7 @@ using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Markup;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using Voidstrap.Resources;
 using Voidstrap.UI.Elements.Base;
 using Voidstrap.UI.Elements.Controls;
@@ -15,14 +16,21 @@ using Voidstrap.UI.Utility;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Wpf.Ui.Controls;
+using Wpf.Ui.Common;
 
 namespace Voidstrap.UI.Elements.Dialogs;
 
 public partial class FluentMessageBox : WpfUiWindow{
 	public MessageBoxResult Result;
 
-	public FluentMessageBox(string message, MessageBoxImage image, MessageBoxButton buttons)
+	private readonly int _confirmationDelaySeconds;
+	private readonly Stopwatch _confirmationClock = new();
+	private DispatcherTimer? _confirmationTimer;
+	private string _confirmationButtonText = string.Empty;
+
+	public FluentMessageBox(string message, MessageBoxImage image, MessageBoxButton buttons, int confirmationDelaySeconds = 0)
 	{
+		_confirmationDelaySeconds = Math.Max(0, confirmationDelaySeconds);
 		InitializeComponent();
 		base.Title = "Voidstrap";
 		RootTitleBar.Title = base.Title;
@@ -107,6 +115,16 @@ public partial class FluentMessageBox : WpfUiWindow{
 			ApplyPortableHeight();
 		}
 		Voidstrap.Utility.SafeSystemSounds.Play(systemSound);
+		if (_confirmationDelaySeconds > 0)
+		{
+			Result = MessageBoxResult.Cancel;
+			_confirmationButtonText = ButtonOne.Content?.ToString() ?? Strings.Common_Yes;
+			ButtonOne.IsEnabled = false;
+			ButtonOne.Appearance = ControlAppearance.Danger;
+			ButtonOne.Content = string.Format(Strings.Vng_Countdown, _confirmationButtonText, _confirmationDelaySeconds);
+			ButtonTwo.IsCancel = true;
+			ButtonTwo.IsDefault = true;
+		}
 		base.Loaded += OnLoaded;
 		base.Closed += OnClosed;
 	}
@@ -173,6 +191,8 @@ public partial class FluentMessageBox : WpfUiWindow{
 	{
 		if (sender is System.Windows.Controls.Button button && button.Tag is MessageBoxResult result)
 		{
+			if (button == ButtonOne && _confirmationDelaySeconds > 0 && _confirmationClock.Elapsed.TotalSeconds < _confirmationDelaySeconds)
+				return;
 			Result = result;
 			Close();
 		}
@@ -180,12 +200,42 @@ public partial class FluentMessageBox : WpfUiWindow{
 
 	private void OnLoaded(object sender, RoutedEventArgs e)
 	{
+		if (_confirmationDelaySeconds > 0 && _confirmationTimer == null)
+		{
+			_confirmationClock.Start();
+			_confirmationTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+			_confirmationTimer.Tick += OnConfirmationTick;
+			_confirmationTimer.Start();
+			ButtonTwo.Focus();
+		}
 		if (Voidstrap.Utility.Platform.IsWindows) { Windows.Win32.PInvoke.FlashWindow((HWND)new WindowInteropHelper(this).Handle, true); }
 		else { ShrinkPortableHeight(); }
 	}
 
+	private void OnConfirmationTick(object? sender, EventArgs e)
+	{
+		int remaining = Math.Max(0, (int)Math.Ceiling(_confirmationDelaySeconds - _confirmationClock.Elapsed.TotalSeconds));
+		ButtonOne.Content = remaining > 0 ? string.Format(Strings.Vng_Countdown, _confirmationButtonText, remaining) : _confirmationButtonText;
+		if (remaining == 0)
+		{
+			ButtonOne.IsEnabled = true;
+			StopConfirmationTimer();
+		}
+	}
+
+	private void StopConfirmationTimer()
+	{
+		if (_confirmationTimer == null)
+			return;
+		_confirmationTimer.Stop();
+		_confirmationTimer.Tick -= OnConfirmationTick;
+		_confirmationTimer = null;
+	}
+
 	private void OnClosed(object? sender, EventArgs e)
 	{
+		StopConfirmationTimer();
+		_confirmationClock.Stop();
 		ButtonOne.Click -= OnButtonClick;
 		ButtonTwo.Click -= OnButtonClick;
 		ButtonThree.Click -= OnButtonClick;

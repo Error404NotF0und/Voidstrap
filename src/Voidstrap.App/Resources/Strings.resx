@@ -2021,4 +2021,33 @@ Would you like to switch your preferred channel to {0}?</value>
   <data name="Installer.Appearance.PageZoom.Description" xml:space="preserve">
     <value>Adjust the size of settings pages.</value>
   </data>
+  <data name="Vng.WarningTitle" xml:space="preserve">
+    <value>Roblox VNG: permanent account restriction</value>
+  </data>
+  <data name="Vng.Warning" xml:space="preserve">
+    <value>STOP: READ BEFORE CONTINUING
+
+Logging into Roblox VNG for the first time migrates your account to VNG. Roblox states that you will no longer be able to use that account in the global Roblox app.
+
+Treat this account migration as permanent. Voidstrap cannot reverse it. Uninstalling VNG or disabling this option does not restore global account access. VNG account and regional restrictions will apply.
+
+Downloading the files alone does not migrate your account. Signing in or launching with an existing account can expose that account to migration.
+
+Continue only if you accept losing global app access for any account you use with VNG. The Yes button unlocks after three seconds.</value>
+  </data>
+  <data name="Vng.Countdown" xml:space="preserve">
+    <value>{0} ({1}s)</value>
+  </data>
+  <data name="Vng.Title" xml:space="preserve">
+    <value>Roblox VNG</value>
+  </data>
+  <data name="Vng.Description" xml:space="preserve">
+    <value>The Vietnam player client. Signing in migrates your account and removes global app access.</value>
+  </data>
+  <data name="Vng.UseForLaunches" xml:space="preserve">
+    <value>Use VNG for player launches</value>
+  </data>
+  <data name="Vng.UninstallWarning" xml:space="preserve">
+    <value>Removing VNG does not reverse an account migration or restore global app access.</value>
+  </data>
 </root>

@@ -5122,5 +5122,19 @@ namespace Voidstrap.Resources {
         public static string Installer_Appearance_PageZoom_Title => ResourceManager.GetString("Installer.Appearance.PageZoom.Title", resourceCulture);
 
         public static string Installer_Appearance_PageZoom_Description => ResourceManager.GetString("Installer.Appearance.PageZoom.Description", resourceCulture);
+
+        public static string Vng_WarningTitle => ResourceManager.GetString("Vng.WarningTitle", resourceCulture);
+
+        public static string Vng_Warning => ResourceManager.GetString("Vng.Warning", resourceCulture);
+
+        public static string Vng_Countdown => ResourceManager.GetString("Vng.Countdown", resourceCulture);
+
+        public static string Vng_Title => ResourceManager.GetString("Vng.Title", resourceCulture);
+
+        public static string Vng_Description => ResourceManager.GetString("Vng.Description", resourceCulture);
+
+        public static string Vng_UseForLaunches => ResourceManager.GetString("Vng.UseForLaunches", resourceCulture);
+
+        public static string Vng_UninstallWarning => ResourceManager.GetString("Vng.UninstallWarning", resourceCulture);
     }
 }

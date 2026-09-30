@@ -70,7 +70,7 @@ internal static class WindowsRegistry
 
 	public static string? DirectPlayerExecutable()
 	{
-		if (App.Settings?.Prop?.LaunchWithoutVoidstrap != true)
+		if (App.Settings?.Prop?.LaunchWithoutVoidstrap != true || App.Settings.Prop.UseVng)
 			return null;
 		string executable = new Voidstrap.AppData.RobloxPlayerData().ExecutablePath;
 		return File.Exists(executable) ? executable : null;

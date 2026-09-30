@@ -46,7 +46,9 @@ internal static class RobloxInstallCompression
 
 	public static IEnumerable<IAppData> Installs()
 	{
-		yield return new RobloxPlayerData();
+		yield return new RobloxPlayerData(false);
+		if (Platform.IsWindows)
+			yield return new RobloxPlayerData(true);
 		yield return new RobloxStudioData();
 	}
 

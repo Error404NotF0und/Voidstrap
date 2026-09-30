@@ -14,6 +14,21 @@ namespace Voidstrap.UI;
 
 internal static class Frontend
 {
+	public static bool ConfirmVng()
+	{
+		if (IsSilent || UiDispatcher == null)
+			return false;
+		return UiDispatcher.Invoke(() =>
+		{
+			FluentMessageBox dialog = new(Strings.Vng_Warning, MessageBoxImage.Warning, MessageBoxButton.YesNo, 3);
+			dialog.Title = Strings.Vng_WarningTitle;
+			dialog.RootTitleBar.Title = dialog.Title;
+			dialog.Width = dialog.MaxWidth;
+			dialog.ShowOwnedDialog();
+			return dialog.Result == MessageBoxResult.Yes;
+		});
+	}
+
 	public static MessageBoxResult ShowMessageBox(string message, MessageBoxImage icon = MessageBoxImage.None, MessageBoxButton buttons = MessageBoxButton.OK, MessageBoxResult defaultResult = MessageBoxResult.None)
 	{
 		App.Logger.WriteLine("Frontend::ShowMessageBox", message);

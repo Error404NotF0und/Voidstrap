@@ -15,6 +15,7 @@ using Microsoft.Win32;
 using Voidstrap.AppData;
 using Voidstrap.Enums;
 using Voidstrap.RobloxInterfaces;
+using Voidstrap.Resources;
 using Voidstrap.UI;
 using Voidstrap.Utility;
 using CoreBootstrapper = Voidstrap.Bootstrapper;
@@ -48,6 +49,27 @@ namespace Voidstrap.UI.ViewModels.Settings
             public bool HasAddons => ShowFleasionAddon || ShowStudioAddons;
             public bool ShowFleasion => ShowFleasionAddon;
             public bool ShowCommunityContent => false;
+
+            public bool IsVng => _appData is RobloxPlayerData { UseVng: true };
+
+            public bool UseVng
+            {
+                get => App.Settings.Prop.UseVng;
+                set
+                {
+                    if (!IsVng || IsBusy || App.Settings.Prop.UseVng == value)
+                        return;
+                    if (value && !Frontend.ConfirmVng())
+                    {
+                        OnPropertyChanged(nameof(UseVng));
+                        return;
+                    }
+                    App.Settings.Prop.UseVng = value;
+                    App.Settings.Save();
+                    WindowsRegistry.RegisterPlayer();
+                    OnPropertyChanged(nameof(UseVng));
+                }
+            }
 
             public ICommand SelectCommand { get; }
 
@@ -184,11 +206,17 @@ namespace Voidstrap.UI.ViewModels.Settings
 
             private async Task RepairAsync()
             {
+                bool previous = App.Settings.Prop.ForceRobloxReinstall;
                 App.Settings.Prop.ForceRobloxReinstall = true;
                 App.Settings.Save();
                 App.Logger?.WriteLine("DownloadsViewModel::Repair", $"Repairing {Title}");
                 if (await InstallOrUpdateAsync().ConfigureAwait(true))
                     await VerifyAsync(false).ConfigureAwait(true);
+                else
+                {
+                    App.Settings.Prop.ForceRobloxReinstall = previous;
+                    App.Settings.Save();
+                }
             }
 
             private void OnVerifyProgress(int done, int total)
@@ -328,7 +356,9 @@ namespace Voidstrap.UI.ViewModels.Settings
                     return;
                 try
                 {
-                    string latest = await FetchLatestVersionAsync(_binaryType).ConfigureAwait(true);
+                    string latest = IsVng
+                        ? (await Deployment.GetInfo("production", binaryType: _binaryType).ConfigureAwait(true)).VersionGuid
+                        : await FetchLatestVersionAsync(_binaryType).ConfigureAwait(true);
                     if (!string.IsNullOrEmpty(latest))
                     {
                         _latestVersion = latest;
@@ -368,10 +398,14 @@ namespace Voidstrap.UI.ViewModels.Settings
                 bool ok = false;
                 try
                 {
-                    var bootstrapper = new CoreBootstrapper(_launchMode) { InstallOnly = true };
+                    var bootstrapper = new CoreBootstrapper(_launchMode, _appData is RobloxPlayerData player ? player.UseVng : null)
+                    {
+                        InstallOnly = true,
+                        ForceReinstall = IsInstalled && !UpdateAvailable
+                    };
                     _activeBootstrapper = bootstrapper;
                     await Task.Run(() => bootstrapper.Run()).ConfigureAwait(true);
-                    ok = true;
+                    ok = bootstrapper.InstallationSucceeded;
                 }
                 catch (Exception ex)
                 {
@@ -437,7 +471,10 @@ namespace Voidstrap.UI.ViewModels.Settings
                     Frontend.ShowMessageBox("Wait for the current operation to finish.", MessageBoxImage.Warning);
                     return;
                 }
-                if (Frontend.ShowMessageBox($"Remove {Title}? This deletes {SizeText} of installed files. You can reinstall it any time.", MessageBoxImage.Question, MessageBoxButton.YesNo, MessageBoxResult.No) != MessageBoxResult.Yes)
+                string removalMessage = $"Remove {Title}? This deletes {SizeText} of installed files. You can reinstall it any time.";
+                if (IsVng)
+                    removalMessage += "\n\n" + Strings.Vng_UninstallWarning;
+                if (Frontend.ShowMessageBox(removalMessage, MessageBoxImage.Question, MessageBoxButton.YesNo, MessageBoxResult.No) != MessageBoxResult.Yes)
                 {
                     _parent.EndOperation();
                     return;
@@ -457,6 +494,13 @@ namespace Voidstrap.UI.ViewModels.Settings
                     _appData.State.PackageHashes?.Clear();
                     _appData.State.Size = 0;
                     App.State.Save();
+                    if (IsVng && App.Settings.Prop.UseVng)
+                    {
+                        App.Settings.Prop.UseVng = false;
+                        App.Settings.Save();
+                        WindowsRegistry.RegisterPlayer();
+                        OnPropertyChanged(nameof(UseVng));
+                    }
                     UpdateAvailable = false;
                     Refresh();
                 }
@@ -536,7 +580,7 @@ namespace Voidstrap.UI.ViewModels.Settings
                 }
 
                 string source = _appData.VersionsRoot;
-                string folderName = _binaryType == "WindowsPlayer" ? "RobloxPlayer" : "RobloxStudio";
+                string folderName = IsVng ? "RobloxVng" : (_binaryType == "WindowsPlayer" ? "RobloxPlayer" : "RobloxStudio");
                 string target = Path.Combine(dialog.FolderName, folderName);
 
                 if (string.Equals(target.TrimEnd('\\'), source.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
@@ -559,7 +603,9 @@ namespace Voidstrap.UI.ViewModels.Settings
                     string exeName = _appData.ExecutableName;
                     string? archive = Voidstrap.Utility.RobloxInstallCompression.IsCompressed(_appData) ? Voidstrap.Utility.RobloxInstallCompression.ArchivePathFor(_appData.Directory) : null;
                     await Task.Run(() => MoveBinaryInstalls(source, target, exeName, _binaryType, archive)).ConfigureAwait(true);
-                    if (_binaryType == "WindowsPlayer")
+                    if (IsVng)
+                        App.Settings.Prop.VngInstallLocation = target;
+                    else if (_binaryType == "WindowsPlayer")
                         App.Settings.Prop.PlayerInstallLocation = target;
                     else
                         App.Settings.Prop.StudioInstallLocation = target;
@@ -1182,8 +1228,10 @@ namespace Voidstrap.UI.ViewModels.Settings
             }
             else
             {
-                Items.Add(new DownloadItem(this, new RobloxPlayerData(), "Roblox Player", "The Roblox client for playing experiences", "pack://application:,,,/Resources/RobloxPlayerIcon.png", "WindowsPlayer", LaunchMode.Player, "RobloxPlayerBeta", true));
+                Items.Add(new DownloadItem(this, new RobloxPlayerData(false), "Roblox Player", "The Roblox client for playing experiences", "pack://application:,,,/Resources/RobloxPlayerIcon.png", "WindowsPlayer", LaunchMode.Player, "RobloxPlayerBeta", true));
                 Items.Add(new DownloadItem(this, new RobloxStudioData(), "Roblox Studio", "Create and edit experiences", "pack://application:,,,/Resources/RobloxStudioIcon.png", "WindowsStudio64", LaunchMode.Studio, "RobloxStudioBeta", false));
+                if (Voidstrap.Utility.Platform.IsWindows)
+                    Items.Add(new DownloadItem(this, new RobloxPlayerData(true), Strings.Vng_Title, Strings.Vng_Description, "pack://application:,,,/Resources/RobloxPlayerIcon.png", "WindowsPlayer", LaunchMode.Player, "RobloxPlayerBeta", true));
             }
             OpenRootCommand = new RelayCommand(OpenRoot);
             RefreshCommand = new RelayCommand(RefreshAll);

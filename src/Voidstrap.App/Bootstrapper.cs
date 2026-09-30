@@ -183,6 +183,14 @@ public class Bootstrapper
 
     public bool InstallOnly { get; set; }
 
+    public bool InstallationSucceeded { get; private set; }
+
+    public bool ForceReinstall { get; init; }
+
+    private bool ReinstallRequested => ForceReinstall || App.Settings.Prop.ForceRobloxReinstall;
+
+    private bool UseVng => AppData is RobloxPlayerData { UseVng: true };
+
     public sealed class DownloadProgressInfo
     {
         public double Percent { get; set; }
@@ -292,7 +300,7 @@ public class Bootstrapper
         AppState state = AppData.State;
         string installed = state.VersionGuid;
         bool late = string.Equals(App.Settings.Prop.RobloxUpdateDelivery, "Late", StringComparison.OrdinalIgnoreCase);
-        if (!late || forceManifest || string.IsNullOrEmpty(installed) || installed == latest || !IsValidVersionGuid(installed) || MustUpgrade || App.Settings.Prop.ForceRobloxReinstall)
+        if (!late || forceManifest || string.IsNullOrEmpty(installed) || installed == latest || !IsValidVersionGuid(installed) || MustUpgrade || ReinstallRequested)
         {
             if (!string.IsNullOrEmpty(state.HeldVersionGuid))
             {
@@ -372,7 +380,7 @@ public class Bootstrapper
         return found;
     }
 
-    public Bootstrapper(LaunchMode launchMode)
+    public Bootstrapper(LaunchMode launchMode, bool? useVng = null)
     {
 		if (DownloadConfiguration.Normalize(App.Settings.Prop))
 			App.Settings.SaveDeferred();
@@ -384,7 +392,9 @@ public class Bootstrapper
         _fastZipEvents.FileFailure = OnExtractionFailure;
         _fastZipEvents.DirectoryFailure = OnExtractionFailure;
         _fastZipEvents.ProcessFile = OnExtractionFile;
-        AppData = IsStudioLaunch ? new RobloxStudioData() : new RobloxPlayerData();
+        AppData = IsStudioLaunch ? new RobloxStudioData() : new RobloxPlayerData(useVng);
+        if (UseVng)
+            _deploymentChannel = "production";
     }
 
     private static void OnExtractionFailure(object _, ScanFailureEventArgs e)
@@ -601,7 +611,7 @@ public class Bootstrapper
 
     private void ApplyForcedReinstall()
     {
-        if (!App.Settings.Prop.ForceRobloxReinstall)
+        if (!ReinstallRequested)
         {
             return;
 		}
@@ -620,6 +630,11 @@ public class Bootstrapper
 
     public async Task Run()
     {
+        if (UseVng && !Frontend.ConfirmVng())
+        {
+            Dialog?.CloseBootstrapper();
+            return;
+        }
         Stopwatch launchTimer = Stopwatch.StartNew();
         App.Logger.WriteLine("Bootstrapper::Run", "Running bootstrapper");
         _safeMode = _launchMode == LaunchMode.Player && App.State.Prop.SafeLaunchPending;
@@ -696,6 +711,7 @@ public class Bootstrapper
                 await StartRoblox(_cancelTokenSource.Token);
             }
             Dialog?.CloseBootstrapper();
+            InstallationSucceeded = InstallOnly && !_cancelTokenSource.IsCancellationRequested;
             return;
         }
         if (!_noConnection)
@@ -717,7 +733,7 @@ public class Bootstrapper
         App.Logger.WriteLine("Bootstrapper::Run", "Version and launcher checks completed in " + launchTimer.ElapsedMilliseconds + " ms");
         if (!_noConnection)
         {
-			bool upgradeRequired = AppData.State.VersionGuid != _latestVersionGuid || MustUpgrade || App.Settings.Prop.ForceRobloxReinstall;
+			bool upgradeRequired = AppData.State.VersionGuid != _latestVersionGuid || MustUpgrade || ReinstallRequested;
 			if (upgradeRequired)
             {
 				Exception? connectivityError = await Deployment.InitializeConnectivity();
@@ -777,6 +793,7 @@ public class Bootstrapper
         Dialog?.CloseBootstrapper();
         if (InstallOnly)
         {
+            InstallationSucceeded = !_cancelTokenSource.IsCancellationRequested && !_noConnection && !MustUpgrade && AppData.State.VersionGuid == _latestVersionGuid;
             return;
         }
         if (_launchMode != LaunchMode.Player || !AssetProxyServer.IsRequired)
@@ -1233,7 +1250,7 @@ public class Bootstrapper
 		{
 			throw new InvalidDataException("VersionGuid resolves outside the versions directory");
 		}
-		if (!forceManifest && AppData.State.VersionGuid == _latestVersionGuid && !MustUpgrade && !App.Settings.Prop.ForceRobloxReinstall)
+		if (!forceManifest && AppData.State.VersionGuid == _latestVersionGuid && !MustUpgrade && !ReinstallRequested)
         {
             App.Logger.WriteLine("Bootstrapper::GetLatestVersionInfo", "Already up to date, skipping package manifest fetch.");
             _versionPackageManifest = new PackageManifest();
@@ -1244,7 +1261,7 @@ public class Bootstrapper
 			_versionPackageManifest = new PackageManifest();
 			return;
 		}
-        IReadOnlyList<string> manifestUrls = Deployment.GetLocations("/" + _latestVersionGuid + "-rbxPkgManifest.txt");
+        IReadOnlyList<string> manifestUrls = Deployment.GetLocations("/" + _latestVersionGuid + "-rbxPkgManifest.txt", UseVng);
         string? manifestBody = null;
         foreach (string manifestUrl in manifestUrls)
         {
@@ -2718,7 +2735,7 @@ public class Bootstrapper
 
     private void CleanupVersionsFolder()
     {
-        RobloxInstallCompression.DeleteStaleArchives(AppData.VersionsRoot, [App.State.Prop.Player.VersionGuid, App.State.Prop.Studio.VersionGuid]);
+        RobloxInstallCompression.DeleteStaleArchives(AppData.VersionsRoot, [App.State.Prop.Player.VersionGuid, App.State.Prop.VngPlayer.VersionGuid, App.State.Prop.Studio.VersionGuid]);
         string[] directories = Directory.GetDirectories(AppData.VersionsRoot);
 		bool customRoot = !PathsEqual(AppData.VersionsRoot, Paths.Versions);
         foreach (string text in directories)
@@ -2728,7 +2745,7 @@ public class Bootstrapper
 			{
 				continue;
             }
-            if (!(fileName == App.State.Prop.Player.VersionGuid) && !(fileName == App.State.Prop.Studio.VersionGuid))
+            if (!(fileName == App.State.Prop.Player.VersionGuid) && !(fileName == App.State.Prop.VngPlayer.VersionGuid) && !(fileName == App.State.Prop.Studio.VersionGuid))
             {
 				if (customRoot && !IsOwnedVersionDirectory(text))
 				{
@@ -3013,6 +3030,7 @@ public class Bootstrapper
 			await CommitInstallationAsync(stagingDirectory, _latestVersionDirectory, AppData.VersionsRoot, ct).ConfigureAwait(continueOnCapturedContext: false);
 			_packageExtractionDirectory = null;
 			VerifyCommittedInstallation();
+            _missingInstalledFiles = -1;
             try
             {
                 MigrateCompatibilityFlags();
@@ -3044,14 +3062,14 @@ public class Bootstrapper
             IEnumerable<string>? enumerable = App.State.Prop.Player?.PackageHashes.Values;
             IEnumerable<string> first = enumerable ?? [];
             enumerable = App.State.Prop.Studio?.PackageHashes.Values;
-            HashSet<string> allHashes = [.. first, .. enumerable ?? []];
+            HashSet<string> allHashes = [.. first, .. enumerable ?? [], .. App.State.Prop.VngPlayer.PackageHashes.Values];
             Voidstrap.Utility.PackageCache.Trim(allHashes);
             try
             {
 				long installedBytes = _versionPackageManifest.Sum(package => (long)package.Size + package.PackedSize);
 				long installedKilobytes = installedBytes / 1024L;
 				AppData.State.Size = (int)Math.Clamp(installedKilobytes, 0L, int.MaxValue);
-				long combinedKilobytes = (long)(App.State.Prop.Player?.Size ?? 0) + (App.State.Prop.Studio?.Size ?? 0);
+				long combinedKilobytes = (long)(App.State.Prop.Player?.Size ?? 0) + (App.State.Prop.Studio?.Size ?? 0) + App.State.Prop.VngPlayer.Size;
                 using RegistryKey registryKey = Registry.CurrentUser.CreateSubKey("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Voidstrap");
 				registryKey?.SetValueSafe("EstimatedSize", (int)Math.Clamp(combinedKilobytes, 0L, int.MaxValue));
             }
@@ -3383,7 +3401,7 @@ public class Bootstrapper
 		ct.ThrowIfCancellationRequested();
 		PackageProgressTracker progress = new(this);
         Directory.CreateDirectory(Paths.Downloads);
-        IReadOnlyList<string> packageUrls = Deployment.GetLocations("/" + _latestVersionGuid + "-" + package.Name);
+        IReadOnlyList<string> packageUrls = Deployment.GetLocations("/" + _latestVersionGuid + "-" + package.Name, UseVng);
         if (packageUrls.Count == 0)
         {
             throw new InvalidOperationException("No download location is available for package " + package.Name + ".");

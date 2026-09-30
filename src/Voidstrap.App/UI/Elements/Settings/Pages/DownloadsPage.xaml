@@ -6,6 +6,7 @@
            xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
            xmlns:pages="clr-namespace:Voidstrap.UI.Elements.Settings.Pages"
            xmlns:fx="clr-namespace:Voidstrap.UI"
+           xmlns:resources="clr-namespace:Voidstrap.Resources"
            Title="Downloads" Scrollable="False">
     <FrameworkElement.Resources>
         <ResourceDictionary>
@@ -237,6 +238,11 @@
                                     <TextBlock Text="{Binding Title}" FontSize="20" FontWeight="SemiBold" Margin="8,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
                                 <TextBlock Text="{Binding Subtitle}" FontSize="13" Opacity="0.7" Margin="0,8,0,0" TextWrapping="Wrap" LineHeight="20" />
+
+                                <StackPanel Margin="0,14,0,0" Visibility="{Binding IsVng, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <ui:ToggleSwitch Content="{x:Static resources:Strings.Vng_UseForLaunches}" IsChecked="{Binding UseVng, Mode=TwoWay}" IsEnabled="{Binding CanPrimary}" />
+                                    <TextBlock Text="{x:Static resources:Strings.Vng_UninstallWarning}" FontSize="12" Foreground="{DynamicResource SystemFillColorCautionBrush}" Margin="0,8,0,0" TextWrapping="Wrap" />
+                                </StackPanel>
 
                                 <Grid Margin="0,18,0,0">
                                     <Grid.ColumnDefinitions>

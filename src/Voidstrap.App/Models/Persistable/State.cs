@@ -21,6 +21,8 @@ public class State
 
 	public AppState Player { get; set; } = new AppState();
 
+	public AppState VngPlayer { get; set; } = new AppState();
+
 	public AppState Studio { get; set; } = new AppState();
 
 	public WindowState SettingsWindow { get; set; } = new WindowState();

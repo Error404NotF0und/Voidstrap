@@ -289,7 +289,7 @@ public static class Deployment
 		}
 	}
 
-	public static IReadOnlyList<string> GetLocations(string resource)
+	public static IReadOnlyList<string> GetLocations(string resource, bool useVng = false)
 	{
 		List<string> hosts = [];
 		if (!string.IsNullOrEmpty(BaseUrl))
@@ -304,6 +304,8 @@ public static class Deployment
 			}
 		}
 		hosts = hosts.OrderBy(host => IsMirrorHealthy(host) ? 0 : 1).ToList();
+		if (useVng)
+			return [.. hosts.Select(host => host + "/vng" + resource)];
 		return [.. hosts.Select(host => host + "/channel/common" + resource), .. hosts.Select(host => host + resource)];
 	}
 }
