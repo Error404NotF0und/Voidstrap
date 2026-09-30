@@ -83,11 +83,10 @@ irm https://voidstrapp.pages.dev/quick-install | iex
 
 ## Installation
 
-1. Download the latest version
-   👉 https://github.com/KloBraticc/Voidstrap/releases/latest
-2. Run the Exe and Finish the setup
-3. Launch Voidstrap
-4. Enjoy a more simple Roblox
+1. Download the [latest version](https://github.com/KloBraticc/Voidstrap/releases/latest).
+2. Run the `.exe` and finish the setup.
+3. Launch Voidstrap.
+4. Enjoy a simpler Roblox!
 
 ### Gentoo Linux
 
@@ -126,31 +125,13 @@ To update to the latest code, run step 3 again.
 
 ## Building
 
-The Windows app can only be built on Windows. The Linux app can be built on Linux or Windows. The Android app can be built on Windows, Linux or macOS.
+| App | Build it on |
+| --- | --- |
+| Windows | Windows |
+| Linux | Linux or Windows |
+| Android | Windows or Linux |
 
-### Requirements
-
-**Windows app**
-
-* Windows 10 or 11 (x64)
-* [.NET SDK 10.0.300](https://dotnet.microsoft.com/download/dotnet/10.0) or newer
-
-**Linux app**
-
-* [Git](https://git-scm.com/downloads), Bash and internet access for NuGet restore
-* [.NET 10 SDK](https://learn.microsoft.com/en-us/dotnet/core/install/linux) 10.0.300 or a later stable 10.0 SDK compatible with `global.json`
-* [PowerShell 7](https://learn.microsoft.com/en-us/powershell/scripting/install/linux-overview), available as `pwsh`, if using the publish script
-* Additional packaging tools listed below, if creating release packages
-
-**Android app**
-
-* [JDK 17](https://adoptium.net/temurin/releases/?version=17)
-* [Android SDK](https://developer.android.com/studio) with SDK Platform 37, Build Tools 37.0.0 and NDK 29.0.14206865, installed from the SDK Manager in Android Studio
-* [Rust](https://rustup.rs/) 1.85 or newer, installed with rustup
-
-### Get the source
-
-Clone the repository with [Git](https://git-scm.com/downloads):
+Start by cloning the repository with [Git](https://git-scm.com/downloads):
 
 ```bash
 git clone https://github.com/KloBraticc/Voidstrap.git
@@ -158,51 +139,29 @@ cd Voidstrap
 ```
 
 > [!TIP]
-> On Windows, clone into a short folder such as `C:\src\Voidstrap`. Windows limits file paths to 260 characters, so a clone inside a deeply nested folder can fail with `Filename too long`, or fail to build with `CS0234` errors about `Windows.Security`.
+> On Windows, clone into a short folder like `C:\src\Voidstrap`. Windows limits file paths to 260 characters, so a deeply nested folder can make the clone or the build fail.
 
 ### Windows app
+
+**You need:** Windows 10 or 11 (64 bit) and the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0), version 10.0.300 or a newer 10.0 release.
 
 ```powershell
 dotnet build Voidstrap.sln -c Release
 ```
 
-The app is written to `src\Voidstrap.App\bin\Release\net10.0-windows\win-x64\Voidstrap.exe`.
+The app is saved to `src\Voidstrap.App\bin\Release\net10.0-windows\win-x64\Voidstrap.exe`.
 
-To build the single `Voidstrap.exe` that releases ship, run the publish script:
+To build the single `Voidstrap.exe` file that releases use:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\publish-all.ps1 -Only windows
 ```
 
-It is written to `PublishedBuilds\Windows\Voidstrap.exe`. Like the releases, it needs the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) to run.
+It is saved to `PublishedBuilds\Windows\Voidstrap.exe`. Like the release version, it needs the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) to run.
 
 ### Linux app
 
-Run the following commands from the repository root after cloning. Build `src/Voidstrap.Cross/Voidstrap.Cross.csproj` for Linux. Building the entire solution on Linux also tries to build the Windows app, whose WinRT tooling requires Windows. The cross platform project uses LibreWPF even though its target framework is named `net10.0-windows`.
-
-#### Set up the SDK
-
-Install the SDK using the [instructions for your Linux distribution](https://learn.microsoft.com/en-us/dotnet/core/install/linux), then check the version selected by `global.json`:
-
-```bash
-dotnet --version
-```
-
-It must report 10.0.300 or a later stable 10.0 SDK. If your package manager only offers an older SDK, install the required version with Microsoft's [install script](https://learn.microsoft.com/en-us/dotnet/core/install/linux-scripted-manual). Install the distribution dependencies listed there first:
-
-```bash
-curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
-bash /tmp/dotnet-install.sh --version 10.0.300 --install-dir "$HOME/.dotnet"
-export DOTNET_ROOT="$HOME/.dotnet"
-export PATH="$DOTNET_ROOT:$PATH"
-dotnet --version
-```
-
-The exports apply to the current terminal. Add them to your shell profile if you want to use this SDK in future terminals.
-
-#### Build the executable
-
-For an Intel or AMD 64 bit Linux system using glibc:
+**You need:** the [.NET 10 SDK](https://learn.microsoft.com/en-us/dotnet/core/install/linux), version 10.0.300 or a newer 10.0 release. Check it with `dotnet --version`. If your distro only offers an older version, use Microsoft's [install script](https://learn.microsoft.com/en-us/dotnet/core/install/linux-scripted-manual).
 
 ```bash
 dotnet publish src/Voidstrap.Cross/Voidstrap.Cross.csproj \
@@ -212,72 +171,79 @@ dotnet publish src/Voidstrap.Cross/Voidstrap.Cross.csproj \
   -p:DebugType=none -p:DebugSymbols=false
 ```
 
-Publish restores NuGet packages and builds dependencies automatically. The output is `PublishedBuilds/Linux-x64/Voidstrap`, an executable with the .NET runtime included. It does not require the Windows Desktop Runtime, Wine or a separate native library build. Running it still requires a graphical Linux session and the system graphics libraries used by LibreWPF.
+The app is saved to `PublishedBuilds/Linux-x64/Voidstrap`. It includes .NET, so there is nothing else to install. Build only this project on Linux, because the full solution also contains the Windows app, which only builds on Windows.
 
-Choose the runtime identifier that matches the destination system. Change both `-r` and the output folder when building another target:
+For other systems, change `linux-x64` (and the output folder) to:
 
-| Runtime identifier | Target CPU | Linux C library |
-| --- | --- | --- |
-| `linux-x64` | Intel or AMD 64 bit | glibc, as used by Ubuntu, Debian, Fedora and Arch |
-| `linux-arm64` | ARM64 | glibc |
-| `linux-musl-x64` | Intel or AMD 64 bit | musl, as used by Alpine |
-| `linux-musl-arm64` | ARM64 | musl |
+* `linux-arm64` for ARM64
+* `linux-musl-x64` or `linux-musl-arm64` for musl based distros like Alpine
 
-Cross compilation produces an executable for the selected target. It does not make that executable runnable on a different CPU or C library.
+**Release packages (optional)**
 
-#### Create release packages
-
-Install PowerShell 7 and make sure `pwsh` is in `PATH`. Full glibc packaging also needs Bash, `curl`, `gzip`, `tar`, `awk`, Binutils (`readelf` and `objdump`), `dpkg-deb`, `rpmbuild`, `flatpak` and `flatpak-builder`. On Ubuntu or Debian, install the package tools with:
+To make `.tar.gz`, `.deb`, `.rpm`, `.AppImage` and `.flatpak` files, install [PowerShell 7](https://learn.microsoft.com/en-us/powershell/scripting/install/linux-overview) and the packaging tools. On Ubuntu or Debian:
 
 ```bash
-sudo apt-get update
 sudo apt-get install curl ca-certificates binutils dpkg rpm flatpak flatpak-builder
 ```
 
-Then publish the x64 release packages:
+Then run:
 
 ```bash
 pwsh -NoProfile -File ./publish-all.ps1 -Only linux-x64 -LinuxPackages -NoPause
 ```
 
-The script writes `.tar.gz`, `.deb`, `.rpm`, `.AppImage`, `.AppImage.zsync` and `.flatpak` files to `PublishedBuilds/Linux`, with the version from `Directory.Build.props` in their names. It downloads AppImage tooling and dependencies as needed, adds Flathub for the current user and installs the Flatpak build runtime and SDK. The first run needs additional download time and disk space. `-LinuxPackages` makes missing packaging prerequisites an error.
+The packages are saved to `PublishedBuilds/Linux`. The first run takes longer because it downloads the AppImage and Flatpak tools.
 
-For an AppImage only, use:
-
-```bash
-pwsh -NoProfile -File ./publish-all.ps1 -Only linux-x64 -AppImage -NoPause
-```
-
-This route needs Bash, `curl`, `gzip`, `tar`, `awk`, Binutils and `dpkg-deb`, plus PowerShell and the .NET SDK. It writes the AppImage and its `.zsync` file to `PublishedBuilds/Linux` without requiring RPM or Flatpak tools.
-
-Replace `linux-x64` with `linux-arm64` to package ARM64. Building a Flatpak for a different CPU also requires registered QEMU user emulation, which the script checks. The musl targets support tar archives through `-LinuxPackages`. DEB, RPM, AppImage and Flatpak packaging use the glibc targets. Add `-SkipAppImage` to the full packaging command to omit AppImage generation.
-
-The x64 build and packaging commands are verified. Test ARM64 and musl builds on matching systems.
+* For an AppImage only, use `-AppImage` instead of `-LinuxPackages`. This skips the RPM and Flatpak tools.
+* musl builds only produce a `.tar.gz`.
 
 ### Android app
 
-Add the Rust targets once:
+**You need:**
+
+* [JDK 17](https://adoptium.net/temurin/releases/?version=17)
+* The [Android SDK](https://developer.android.com/studio) with SDK Platform 37, Build Tools 37.0.0 and NDK 29.0.14206865 (install them from the SDK Manager in Android Studio)
+* [Rust](https://rustup.rs/) 1.85 or newer
+
+Set `JAVA_HOME` to your JDK folder and `ANDROID_HOME` to your Android SDK folder. Then add the Rust targets (only needed once):
 
 ```bash
 rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
 ```
 
-Gradle finds the JDK through `JAVA_HOME` and the Android SDK through `ANDROID_HOME`, so set both before building. Then build the debug APKs:
+Build the debug APKs:
 
 ```bash
 cd android
 ./gradlew assembleDebug
 ```
 
-On Windows, run `.\gradlew.bat assembleDebug` instead. The APKs are written to `android/app/build/outputs/apk/`, one per flavor: `play` is the Google Play version, and `direct` is the GitHub download, which updates itself and includes the server matchmaker.
+On Windows, use `.\gradlew.bat assembleDebug` instead. The APKs are saved to `android/app/build/outputs/apk/`, in two versions:
 
-Release APKs are signed with your own keystore. Add `voidstrap.storeFile`, `voidstrap.storePassword`, `voidstrap.keyAlias` and `voidstrap.keyPassword` to `~/.gradle/gradle.properties`, then run the publish script from the repository root:
+* `play`: the Google Play version
+* `direct`: the GitHub version, which updates itself and includes the server matchmaker
+
+**Signed release APKs**
+
+Release APKs are signed with your own keystore. Add these lines to `~/.gradle/gradle.properties`:
+
+```properties
+voidstrap.storeFile=/path/to/your.keystore
+voidstrap.storePassword=your_store_password
+voidstrap.keyAlias=your_key_alias
+voidstrap.keyPassword=your_key_password
+```
+
+Then run this from the repository root:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\publish-all.ps1 -Only android
 ```
 
-The signed APKs are written to `PublishedBuilds\Android`. The publish script keeps other targets' output and reuses build caches by default. Add `-Clean` to clear the selected targets' build caches before publishing.
+On Linux, use `pwsh -NoProfile -File ./publish-all.ps1 -Only android` instead. The signed APKs are saved to `PublishedBuilds/Android`.
+
+> [!TIP]
+> The publish script reuses build caches to save time. Add `-Clean` to any `publish-all.ps1` command to rebuild from scratch.
 
 ## Forking
 
