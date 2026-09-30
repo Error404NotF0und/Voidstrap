@@ -2062,7 +2062,7 @@ Type the exact phrase shown below to accept these restrictions and continue.</va
     <value>MTU</value>
   </data>
   <data name="Mtu.Description" xml:space="preserve">
-    <value>Sets the adapter's packet size limit for all apps, including Roblox. Requires admin access and persists after restart. Lower MTU may not improve ping.</value>
+    <value>Limits packet size for all apps, including Roblox. Requires admin access and persists after restart. May not improve ping.</value>
   </data>
   <data name="Mtu.Adapter" xml:space="preserve">
     <value>Select a network adapter and IP version</value>
