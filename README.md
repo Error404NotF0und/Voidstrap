@@ -89,6 +89,65 @@ irm https://voidstrapp.pages.dev/quick-install | iex
 3. Launch Voidstrap
 4. Enjoy a more simple Roblox
 
+## Android Setup
+### There are 3 method to use Voidstrap on mobile
+1. Shizuku(kindof broken)
+2. ADB Commands
+3. Root
+(p.s: Those who use root know very well how to set it up so I will not provide a guide for that)
+### ADB Connection Guide
+### To connect to ADB, theres two methods
+1. ADB PC
+2. Wireless ADB
+
+
+<details>
+  <summary><strong>ADB PC Method</strong></summary>
+Step-1: Download the latest platform tools from [here](https://dl.google.com/android/repository/platform-tools-latest-windows.zip)
+Step-2: Right Click on it and click extract to platform-tools-latest-windows
+Step-3: Copy it to a directory like Documents
+Step-4: Go to platform-tools-latest-windows folder, and when you see files like adb.exe, dont click on it
+Step-5: Click on the directory bar and type `cmd`
+Step-6: Type `adb devices` and you have initialized adb on your pc! but we still havent done android have we?
+
+### Android ADB connection guide
+Step-1: Go to settings and then about phone
+Step-2: Find Build number:
+
+    Google Pixel    Settings → About phone → Build number
+Samsung Galaxy    Settings → About phone → Software information → Build number
+OnePlus    Settings → About device → Version → Build number
+Xiaomi/Redmi/POCO    Settings → About phone → OS version or MIUI/HyperOS version
+Motorola    Settings → About phone → Build number
+LG    Settings → About phone → Software info → Build number
+HTC    Settings → About → Software information → More → Build number
+Sony Xperia    Settings → About phone → Build number
+ASUS Zenfone/ROG    Settings → System → About phone → Software information → Build number
+Amazon Fire tablet    Settings → Device Options → About Fire Tablet → Serial number
+Tap Build number seven times.
+Enter your device PIN, password, or pattern if prompted.
+You should see a message such as “You are now a developer!”
+Return to the main Settings screen and open:
+
+    System → Developer options, or
+    Additional settings → Developer options, depending on the device.
+
+Step-3: Find the USB Debugging Option and turn it on
+
+Step-4: Connect your device with a data supporting cable and do the same cmd on pc as you did on step 6 of that guide, you should now see a debug dialog on your phone, check the checkbox and press yes
+(p.s: Instead of build number smth else can also show like OS version)
+</details>
+
+<details>
+  <summary><strong>Wireless ADB Method(Must be over android 11 or 12 i forgot)</strong></summary>
+
+Step-1: Do everything of the normal android adb guide before step 4
+Step-2: Find The Wireless debugging option and turn it on/press it to enter
+</details>
+### Now we can use commands:
+1. PC Method: In the platform tools directory do the same as in step 6(ALWAYS EXECUTE ADB COMMANDS IN THE PLATFORM TOOLS DIRECTORY, DO NOT OPEN TERMINAL FROM START MENU OR WIN+X IT WILL NOT WORK), then do `adb shell "content read --url content://com.voidstrap.android.direct.start/start.sh | sh`
+WIP
+
 ### Gentoo Linux
 
 Voidstrap is packaged for Gentoo in the [Voidstrap overlay](https://github.com/Pedrodroks34/voidstrap-overlay), maintained by [@Pedrodroks34](https://github.com/Pedrodroks34). It builds the latest code from the `main` branch and needs an amd64 system on a Gentoo desktop profile. Run these commands as root:
