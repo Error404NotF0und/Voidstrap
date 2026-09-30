@@ -20,12 +20,21 @@ internal static class Frontend
 			return false;
 		return UiDispatcher.Invoke(() =>
 		{
-			FluentMessageBox dialog = new(Strings.Vng_Warning, MessageBoxImage.Warning, MessageBoxButton.YesNo, 3);
+			FluentMessageBox dialog = new(Strings.Vng_Warning, MessageBoxImage.Warning, MessageBoxButton.YesNo, 5);
 			dialog.Title = Strings.Vng_WarningTitle;
 			dialog.RootTitleBar.Title = dialog.Title;
 			dialog.Width = dialog.MaxWidth;
 			dialog.ShowOwnedDialog();
-			return dialog.Result == MessageBoxResult.Yes;
+			if (dialog.Result != MessageBoxResult.Yes)
+				return false;
+			FluentMessageBox confirmation = new(Strings.Vng_Confirmation, MessageBoxImage.Question, MessageBoxButton.YesNo);
+			confirmation.Title = Strings.Vng_WarningTitle;
+			confirmation.RootTitleBar.Title = confirmation.Title;
+			confirmation.Result = MessageBoxResult.No;
+			confirmation.ButtonTwo.IsCancel = true;
+			confirmation.ButtonTwo.IsDefault = true;
+			confirmation.ShowOwnedDialog();
+			return confirmation.Result == MessageBoxResult.Yes;
 		});
 	}
 

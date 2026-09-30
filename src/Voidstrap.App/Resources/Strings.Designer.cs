@@ -5127,6 +5127,8 @@ namespace Voidstrap.Resources {
 
         public static string Vng_Warning => ResourceManager.GetString("Vng.Warning", resourceCulture);
 
+        public static string Vng_Confirmation => ResourceManager.GetString("Vng.Confirmation", resourceCulture);
+
         public static string Vng_Countdown => ResourceManager.GetString("Vng.Countdown", resourceCulture);
 
         public static string Vng_Title => ResourceManager.GetString("Vng.Title", resourceCulture);
