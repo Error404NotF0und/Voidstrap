@@ -1231,7 +1231,7 @@ namespace Voidstrap.UI.ViewModels.Settings
                 Items.Add(new DownloadItem(this, new RobloxPlayerData(false), "Roblox Player", "The Roblox client for playing experiences", "pack://application:,,,/Resources/RobloxPlayerIcon.png", "WindowsPlayer", LaunchMode.Player, "RobloxPlayerBeta", true));
                 Items.Add(new DownloadItem(this, new RobloxStudioData(), "Roblox Studio", "Create and edit experiences", "pack://application:,,,/Resources/RobloxStudioIcon.png", "WindowsStudio64", LaunchMode.Studio, "RobloxStudioBeta", false));
                 if (Voidstrap.Utility.Platform.IsWindows)
-                    Items.Add(new DownloadItem(this, new RobloxPlayerData(true), Strings.Vng_Title, Strings.Vng_Description, "pack://application:,,,/Resources/RobloxPlayerIcon.png", "WindowsPlayer", LaunchMode.Player, "RobloxPlayerBeta", true));
+                    Items.Add(new DownloadItem(this, new RobloxPlayerData(true), Strings.Vng_Title, Strings.Vng_Description, "pack://application:,,,/Resources/RobloxVngIcon.png", "WindowsPlayer", LaunchMode.Player, "RobloxPlayerBeta", true));
             }
             OpenRootCommand = new RelayCommand(OpenRoot);
             RefreshCommand = new RelayCommand(RefreshAll);
