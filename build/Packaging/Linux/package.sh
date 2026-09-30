@@ -295,7 +295,7 @@ case "$FORMAT" in
   rpm)
     TARGET="$STAGE/Voidstrap_${VERSION}_${RPM_ARCH}.rpm"
     RPMROOT="$STAGE/rpmbuild"
-    mkdir -p "$RPMROOT/BUILD" "$RPMROOT/BUILDROOT" "$RPMROOT/RPMS" "$RPMROOT/SOURCES" "$RPMROOT/SPECS" "$RPMROOT/SRPMS"
+    mkdir -p "$RPMROOT/BUILD" "$RPMROOT/BUILDROOT" "$RPMROOT/RPMS" "$RPMROOT/SOURCES" "$RPMROOT/SPECS" "$RPMROOT/SRPMS" "$RPMROOT/rpmdb"
     cp -R "$PUBLISH/." "$RPMROOT/SOURCES/publish"
     cp "$DESKTOP_FILE" "$RPMROOT/SOURCES/$APPLICATION_ID.desktop"
     cp "$ICON_FILE" "$RPMROOT/SOURCES/$APPLICATION_ID.png"
@@ -303,7 +303,7 @@ case "$FORMAT" in
     cp "$LICENSE_FILE" "$RPMROOT/SOURCES/LICENSE"
     RPM_DATE="$(LC_ALL=C date -u -d "@${SOURCE_DATE_EPOCH:-$(date +%s)}" '+%a %b %d %Y')"
     sed -e "s/@VERSION@/$VERSION/g" -e "s/@ARCH@/$RPM_ARCH/g" -e "s/@DATE@/$RPM_DATE/g" "$ROOT/build/Packaging/Linux/voidstrap.spec.in" > "$RPMROOT/SPECS/voidstrap.spec"
-    rpmbuild --define "_topdir $RPMROOT" --target "$RPM_ARCH" -bb "$RPMROOT/SPECS/voidstrap.spec"
+    rpmbuild --define "_topdir $RPMROOT" --define "_dbpath $RPMROOT/rpmdb" --target "$RPM_ARCH" -bb "$RPMROOT/SPECS/voidstrap.spec"
     cp "$RPMROOT/RPMS/$RPM_ARCH/voidstrap-$VERSION-1.$RPM_ARCH.rpm" "$TARGET"
     ;;
   appimage)
