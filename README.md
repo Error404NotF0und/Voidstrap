@@ -156,11 +156,17 @@ Step-4: Connect your device with a data supporting cable and do the same cmd on 
 Step-1: Do everything of the normal android adb guide before step 4
 Step-2: Find The Wireless debugging option and turn it on/press it to enter
 </details>
+
 Now we can use commands:
+
 1. PC Method: In the platform tools directory do the same as in step 6(ALWAYS EXECUTE ADB COMMANDS IN THE PLATFORM TOOLS DIRECTORY, DO NOT OPEN TERMINAL FROM START MENU OR WIN+X IT WILL NOT WORK), then do `adb shell "content read --url content://com.voidstrap.android.direct.start/start.sh | sh`
+
 Extra: Shizuku(For Wireless Terminal):
+
 Step-1:(you must have [shizuku](https://github.com/RikkaApps/Shizuku/releases/download/v13.6.0/shizuku-v13.6.0.r1086.2650830c-release.apk) for this) 
+
 Step-2: Turn on wireless debugging option
+
 Step-3:Go to shizuku and click on pair(in the wireless debugging part) then go back to the wireless debug page and click on pair with code, shizuku should also pop up in the notifications with a prompt to enter pin, from the pair with code, type that pin into the shizukus notification and you have shizuku! 
 
 2. Wireless Terminal method: Do the wireless guide and then install [aShell](https://f-droid.org/repo/in.sunilpaulmathew.ashell_28.apk), then allow it to use shizuku, then in the aShell app, type `adb shell "content read --url content://com.voidstrap.android.direct.start/start.sh | sh`
