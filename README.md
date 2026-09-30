@@ -90,7 +90,7 @@ irm https://voidstrapp.pages.dev/quick-install | iex
    
 ## Android Setup
 ### There are 3 method to use Voidstrap on mobile
-1. Shizuku(kindof broken)
+1. Shizuku(Easiest)
 2. ADB Commands
 3. Root
 (p.s: Those who use root know very well how to set it up so I will not provide a guide for that)
@@ -151,23 +151,25 @@ Step-4: Connect your device with a data supporting cable and do the same cmd on 
 </details>
 
 <details>
-  <summary><strong>Wireless ADB Method(Must be over android 11 or 12 i forgot)</strong></summary>
+  <summary><strong>Wireless ADB Method(Must be over android 11)</strong></summary>
 
 Step-1: Do everything of the normal android adb guide before step 4
 Step-2: Find The Wireless debugging option and turn it on/press it to enter
 </details>
 
-Now we can use commands:
-
-1. PC Method: In the platform tools directory do the same as in step 6(ALWAYS EXECUTE ADB COMMANDS IN THE PLATFORM TOOLS DIRECTORY, DO NOT OPEN TERMINAL FROM START MENU OR WIN+X IT WILL NOT WORK), then do `adb shell "content read --url content://com.voidstrap.android.direct.start/start.sh | sh`
-
-Extra: Shizuku(For Wireless Terminal):
-
-Step-1:(you must have [shizuku](https://github.com/RikkaApps/Shizuku/releases/download/v13.6.0/shizuku-v13.6.0.r1086.2650830c-release.apk) for this) 
+Shizuku Method: First initialize shizuku:
+Step-1:Install [shizuku](https://github.com/RikkaApps/Shizuku/releases/download/v13.6.0/shizuku-v13.6.0.r1086.2650830c-release.apk
 
 Step-2: Turn on wireless debugging option
 
 Step-3:Go to shizuku and click on pair(in the wireless debugging part) then go back to the wireless debug page and click on pair with code, shizuku should also pop up in the notifications with a prompt to enter pin, from the pair with code, type that pin into the shizukus notification and you have shizuku! 
+
+Step-4: Then go to Voidstrap>Settings>Voidstrap Helper and allow it and your done?
+
+ADB Commands Method
+
+1. PC Method: In the platform tools directory do the same as in step 6(ALWAYS EXECUTE ADB COMMANDS IN THE PLATFORM TOOLS DIRECTORY, DO NOT OPEN TERMINAL FROM START MENU OR WIN+X IT WILL NOT WORK), then do `adb shell "content read --url content://com.voidstrap.android.direct.start/start.sh | sh`
+
 
 2. Wireless Terminal method: Do the wireless guide and then install [aShell](https://f-droid.org/repo/in.sunilpaulmathew.ashell_28.apk), then allow it to use shizuku, then in the aShell app, type `adb shell "content read --url content://com.voidstrap.android.direct.start/start.sh | sh`
 
