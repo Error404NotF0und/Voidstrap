@@ -2033,7 +2033,7 @@ Treat this account migration as permanent. Voidstrap cannot reverse it. Uninstal
 
 Downloading the files alone does not migrate your account. Signing in or launching with an existing account can expose that account to migration.
 
-Continue only if you accept losing global app access for any account you use with VNG. The Yes button unlocks after five seconds.</value>
+Continue only if you accept losing global app access for any account you use with VNG. The Yes button unlocks after ten seconds.</value>
   </data>
   <data name="Vng.Confirmation" xml:space="preserve">
     <value>Are you sure?</value>

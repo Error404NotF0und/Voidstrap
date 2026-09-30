@@ -20,7 +20,7 @@ internal static class Frontend
 			return false;
 		return UiDispatcher.Invoke(() =>
 		{
-			FluentMessageBox dialog = new(Strings.Vng_Warning, MessageBoxImage.Warning, MessageBoxButton.YesNo, 5);
+			FluentMessageBox dialog = new(Strings.Vng_Warning, MessageBoxImage.Warning, MessageBoxButton.YesNo, 10);
 			dialog.Title = Strings.Vng_WarningTitle;
 			dialog.RootTitleBar.Title = dialog.Title;
 			dialog.Width = dialog.MaxWidth;
